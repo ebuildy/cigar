@@ -10,6 +10,8 @@ A Go service that turns your CI pipelines' **actual resource usage** into merge 
 
 It receives GitLab **Pipeline event** webhooks, queries **Prometheus** (cadvisor metrics) for the CPU, memory, throttling and network usage of the Kubernetes runner pods that executed the pipeline's jobs, and posts a **single, continuously-updated MR comment** with the numbers and actionable advice.
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ebuildy/cigar/badge)](https://scorecard.dev/viewer/?uri=github.com/ebuildy/cigar)
+
 ## What you get on your MR
 
 - **Pipeline totals** — total memory (sum of job peaks), peak memory, CPU time consumed, network RX/TX.
@@ -80,7 +82,9 @@ Environment variables only (12-factor). The bot fails fast at startup if a requi
 
 ## Development
 
-Toolchain is managed by [mise](https://mise.jdx.dev) (Go 1.26, golangci-lint — pinned in `mise.toml`):
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow (mise setup, tasks, definition of done, releasing).
+
+Toolchain is managed by [mise](https://mise.jdx.dev) (Go 1.26, golangci-lint, goreleaser — pinned in `mise.toml`):
 
 ```sh
 mise install          # install pinned toolchain
