@@ -1,0 +1,27 @@
+[tools]
+go = "1.26.5"
+golangci-lint = "2.12.2"
+
+[env]
+CGO_ENABLED = "0"
+
+[tasks.build]
+description = "Build the bot binary"
+run = "go build -o bin/bot ./cmd/bot"
+
+[tasks.test]
+description = "Run all tests with the race detector"
+env = { CGO_ENABLED = "1" } # -race requires cgo
+run = "go test -race ./..."
+
+[tasks.lint]
+description = "Run golangci-lint"
+run = "golangci-lint run"
+
+[tasks.docker]
+description = "Build the container image (multi-stage, distroless, nonroot)"
+run = "docker build -t gitlab-ci-resources-bot:latest ."
+
+[tasks.run]
+description = "Run the bot locally (expects env vars, see README)"
+run = "go run ./cmd/bot serve"
