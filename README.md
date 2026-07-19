@@ -47,6 +47,7 @@ internal/
   correlate/        map GitLab job → k8s pod/containers
   report/           markdown rendering (text/template), advice engine, thresholds
   config/           env-based config, fail-fast validation
+  e2e/              end-to-end test: real components against mock GitLab + Prometheus servers
 ```
 
 Packages communicate through interfaces (`metrics.Source`, `gitlab.Client`, `correlate.Resolver`) so tests can stub every boundary.
@@ -72,6 +73,7 @@ Environment variables only (12-factor). The bot fails fast at startup if a requi
 | `PROMETHEUS_URL` | ✅ | — | Prometheus base URL (cadvisor + kube-state-metrics scraped) |
 | `GITLAB_URL` | | `https://gitlab.com` | GitLab instance base URL |
 | `THROTTLE_WARN_RATIO` | | `0.25` | Throttled-periods ratio above which a job gets a ⚠️ warning |
+| `SCRAPE_INTERVAL` | | `30s` | Prometheus scrape interval; query windows are padded by one interval |
 | `LISTEN_ADDR` | | `:8080` | Webhook listen address |
 | `OPS_ADDR` | | `:8081` | Health (`/healthz`, `/readyz`) and metrics (`/metrics`) address |
 | `LOG_LEVEL` | | `info` | `debug`, `info`, `warn`, `error` (JSON logs via `log/slog`) |
@@ -83,11 +85,19 @@ Toolchain is managed by [mise](https://mise.jdx.dev) (Go 1.26, golangci-lint —
 ```sh
 mise install          # install pinned toolchain
 mise r build          # go build ./cmd/bot → bin/bot
-mise r test           # go test -race ./...
+mise r test           # go test -race ./... (includes the e2e tests)
+mise r test:e2e       # only the e2e tests, verbose (mock GitLab + Prometheus)
 mise r lint           # golangci-lint run
 mise r run            # go run ./cmd/bot serve (export the env vars above first)
 mise r docker         # multi-stage build, distroless/static, nonroot
+mise r release:snapshot  # local goreleaser snapshot build (no publish)
 ```
+
+### CI & releases
+
+GitHub Actions runs the same mise tasks as local development (`.github/workflows/ci.yml`: lint → test → build on every push and PR).
+
+Releases are handled by [GoReleaser](https://goreleaser.com): push a `v*` tag and `.github/workflows/release.yml` publishes a GitHub release with binaries for linux/darwin (amd64/arm64), archives, checksums and a changelog. The tag version is stamped into the binary (`bot --version`).
 
 ### Definition of done
 
@@ -110,4 +120,4 @@ Helm chart in `deploy/chart/`: Deployment (2 replicas, PDB), Service, Ingress (T
 
 ## Status
 
-Bootstrap stage. Implemented and tested: the webhook intake path (validation, filtering, queueing), the report orchestration (`internal/reporter`, shared by `serve` and `run`), and the GitLab API client (jobs listing, MR lookup, idempotent note upsert). Still to come: the Prometheus pod-correlation and usage queries (stubbed — affected jobs are reported without metrics) and the markdown report template. See `CLAUDE.md` for the full implementation notes (PromQL queries, pod↔job correlation strategies, GitLab API details).
+Bootstrap stage. Implemented and tested: the webhook intake path (validation, filtering, queueing), the report orchestration (`internal/reporter`, shared by `serve` and `run`), the GitLab API client (jobs listing, MR lookup, idempotent note upsert), and the Prometheus pod-correlation and usage queries — all exercised end-to-end in `internal/e2e` against mock GitLab and Prometheus servers. Still to come: the markdown report template (currently a placeholder), the pod-name-pattern correlation fallback, and validation of the PromQL queries against a real Prometheus snapshot. See `CLAUDE.md` for the full implementation notes.

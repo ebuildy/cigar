@@ -31,10 +31,18 @@ func newReporter(cfg *config.Config, log *slog.Logger) (*reporter.Reporter, erro
 	if err != nil {
 		return nil, err
 	}
+	resolver, err := correlate.NewPromResolver(cfg.PrometheusURL, cfg.ScrapeInterval)
+	if err != nil {
+		return nil, err
+	}
+	source, err := metrics.NewPromSource(cfg.PrometheusURL, cfg.ScrapeInterval)
+	if err != nil {
+		return nil, err
+	}
 	return &reporter.Reporter{
 		GitLab:            gl,
-		Resolver:          correlate.NewPromResolver(cfg.PrometheusURL),
-		Metrics:           metrics.NewPromSource(cfg.PrometheusURL),
+		Resolver:          resolver,
+		Metrics:           source,
 		ThrottleWarnRatio: cfg.ThrottleWarnRatio,
 		Log:               log,
 	}, nil

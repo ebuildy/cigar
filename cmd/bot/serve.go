@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/config"
-	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/report"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/reporter"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/webhook"
 )
@@ -112,26 +111,13 @@ func process(ctx context.Context, rep *reporter.Reporter, ev webhook.PipelineEve
 	ctx, cancel := context.WithTimeout(ctx, processTimeout)
 	defer cancel()
 
-	log = log.With("pipeline_id", ev.ObjectAttributes.ID, "project_id", ev.Project.ID)
-
-	data, err := rep.Build(ctx, ev.Project.ID, ev.ObjectAttributes.ID)
-	if err != nil {
-		log.Error("build report failed", "err", err)
-		return
-	}
-	data.Status = ev.ObjectAttributes.Status
-
-	body, err := report.Render(data)
-	if err != nil {
-		log.Error("render report failed", "err", err)
-		return
-	}
-
 	// The handler only enqueues events with a merge request attached.
 	mrIID := ev.MergeRequest.IID
-	if err := rep.GitLab.UpsertNote(ctx, ev.Project.ID, mrIID, report.Marker, body); err != nil {
-		log.Error("upsert MR note failed", "mr_iid", mrIID, "err", err)
+	log = log.With("pipeline_id", ev.ObjectAttributes.ID, "project_id", ev.Project.ID, "mr_iid", mrIID)
+
+	if err := rep.ProcessPipeline(ctx, ev.Project.ID, ev.ObjectAttributes.ID, mrIID, ev.ObjectAttributes.Status); err != nil {
+		log.Error("process pipeline failed", "err", err)
 		return
 	}
-	log.Info("report posted", "mr_iid", mrIID)
+	log.Info("report posted")
 }

@@ -12,10 +12,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// version is stamped by goreleaser via -ldflags "-X main.version=...".
+var version = "dev"
+
 func main() {
 	root := &cobra.Command{
 		Use:           "bot",
 		Short:         "Posts CI pipeline resource-usage reports as GitLab MR comments",
+		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

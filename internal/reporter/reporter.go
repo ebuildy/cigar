@@ -23,6 +23,26 @@ type Reporter struct {
 	Log               *slog.Logger
 }
 
+// ProcessPipeline builds the report for one pipeline and upserts it as a
+// note on the given MR. This is the whole webhook-worker path; `bot run`
+// uses Build + report.Render directly to print instead of posting.
+func (r *Reporter) ProcessPipeline(ctx context.Context, projectID, pipelineID, mrIID int64, status string) error {
+	data, err := r.Build(ctx, projectID, pipelineID)
+	if err != nil {
+		return err
+	}
+	data.Status = status
+
+	body, err := report.Render(data)
+	if err != nil {
+		return fmt.Errorf("render report: %w", err)
+	}
+	if err := r.GitLab.UpsertNote(ctx, projectID, mrIID, report.Marker, body); err != nil {
+		return fmt.Errorf("upsert note on MR !%d: %w", mrIID, err)
+	}
+	return nil
+}
+
 // Build assembles the report data for one pipeline. Per-job failures
 // (no pod correlated, metrics query failed) leave that job's Usage nil rather
 // than failing the whole pipeline.
