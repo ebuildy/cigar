@@ -1,8 +1,10 @@
 # CIgar
 
+<!-- markdownlint-disable MD033 -->
 <p align="center">
   <img src="doc/logo.svg" alt="CIgar logo" width="200">
 </p>
+<!-- markdownlint-enable MD033 -->
 
 A Go service that turns your CI pipelines' **actual resource usage** into merge request feedback.
 
