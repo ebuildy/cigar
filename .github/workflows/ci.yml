@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: lint / test / build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Installs the exact toolchain pinned in mise.toml (go, golangci-lint)
+      # so CI runs the same versions as local development.
+      - uses: jdx/mise-action@v2
+
+      - name: Lint
+        run: mise r lint
+
+      - name: Test
+        run: mise r test
+
+      - name: Build
+        run: mise r build

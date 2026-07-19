@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 )
 
 type Config struct {
@@ -14,6 +15,7 @@ type Config struct {
 	GitLabToken       string
 	PrometheusURL     string
 	ThrottleWarnRatio float64
+	ScrapeInterval    time.Duration
 	ListenAddr        string
 	OpsAddr           string
 	LogLevel          string
@@ -26,6 +28,7 @@ func Load() (*Config, error) {
 		GitLabToken:       os.Getenv("GITLAB_TOKEN"),
 		PrometheusURL:     os.Getenv("PROMETHEUS_URL"),
 		ThrottleWarnRatio: 0.25,
+		ScrapeInterval:    30 * time.Second,
 		ListenAddr:        getenv("LISTEN_ADDR", ":8080"),
 		OpsAddr:           getenv("OPS_ADDR", ":8081"),
 		LogLevel:          getenv("LOG_LEVEL", "info"),
@@ -37,6 +40,14 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("THROTTLE_WARN_RATIO must be a float in [0,1], got %q", v)
 		}
 		cfg.ThrottleWarnRatio = r
+	}
+
+	if v := os.Getenv("SCRAPE_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			return nil, fmt.Errorf("SCRAPE_INTERVAL must be a positive duration, got %q", v)
+		}
+		cfg.ScrapeInterval = d
 	}
 
 	// WEBHOOK_SECRET is only required by `serve`, which validates it itself.

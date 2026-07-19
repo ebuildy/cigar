@@ -31,6 +31,7 @@ internal/
   correlate/             # map GitLab job -> k8s pod/containers (labels/annotations)
   report/                # markdown rendering (templates), advice engine, thresholds
   config/                # env-based config, validation
+  e2e/                   # end-to-end test: real components against mock GitLab + Prometheus HTTP servers
 ```
 
 - CLI via `spf13/cobra`: `bot serve` runs the service (container CMD); `bot run --project <id> <pipeline-id>` builds the same report once and prints it to stdout (logs on stderr). New entry points are subcommands, not flags on root.
@@ -66,7 +67,8 @@ GitLab Kubernetes executor pods carry labels/annotations like `job_id`, `project
 - Throttling: `increase(container_cpu_cfs_throttled_periods_total[...]) / increase(container_cpu_cfs_periods_total[...])` per container.
 - Network: `increase(container_network_receive_bytes_total{...}[<window>])` and transmit equivalent (pod-level, no `container` label).
 - Requests/limits: `kube_pod_container_resource_requests` / `kube_pod_container_resource_limits` (kube-state-metrics).
-- Account for Prometheus scrape interval: pad windows by one scrape interval; short jobs (<2 scrapes) get a "low confidence" marker, not fabricated numbers.
+- Account for Prometheus scrape interval (`SCRAPE_INTERVAL`, default `30s`): pad windows by one scrape interval; short jobs (<2 scrapes) get a "low confidence" marker, not fabricated numbers.
+- Absent series ≠ zero: a query matching nothing leaves the field unset, it is never written as `0` measured.
 
 ### GitLab API
 
@@ -76,7 +78,7 @@ GitLab Kubernetes executor pods carry labels/annotations like `job_id`, `project
 
 ### Config (env only, 12-factor)
 
-`WEBHOOK_SECRET`, `GITLAB_URL`, `GITLAB_TOKEN`, `PROMETHEUS_URL`, `THROTTLE_WARN_RATIO` (default `0.25`), `LISTEN_ADDR`, `LOG_LEVEL`. Fail fast at startup on missing required vars. `WEBHOOK_SECRET` is required by `serve` only — `bot run` works without it.
+`WEBHOOK_SECRET`, `GITLAB_URL`, `GITLAB_TOKEN`, `PROMETHEUS_URL`, `THROTTLE_WARN_RATIO` (default `0.25`), `SCRAPE_INTERVAL` (default `30s`), `LISTEN_ADDR`, `LOG_LEVEL`. Fail fast at startup on missing required vars. `WEBHOOK_SECRET` is required by `serve` only — `bot run` works without it.
 
 ## Go conventions
 
@@ -86,6 +88,7 @@ GitLab Kubernetes executor pods carry labels/annotations like `job_id`, `project
 - Context everywhere: every outbound call takes `context.Context` with timeout.
 - Report rendering via `text/template` with golden-file tests (`testdata/*.md`).
 - Table-driven tests; webhook handler tested via Fiber's `app.Test` (body-limit `413` needs a real listener — fasthttp rejects below `app.Test`'s reach); fake Prometheus/GitLab via interfaces. Target: `internal/report` and `internal/webhook` fully covered.
+- `internal/e2e` runs the whole chain (webhook app → queue → worker → GitLab/Prometheus clients) against `httptest` mock servers: mock GitLab serves jobs/notes REST endpoints and records note upserts; mock Prometheus serves `/api/v1/query` and records PromQL. Extend it when adding pipeline behavior — it is the proof that note idempotency and pod-filtered queries survive refactors.
 
 ## Commands
 
@@ -93,12 +96,17 @@ Use mise:
 
 ```sh
 mise r build          # go build ./cmd/bot
-mise r test           # go test -race ./...
+mise r test           # go test -race ./... (includes e2e)
+mise r test:e2e       # only internal/e2e, verbose, cache-busted
 mise r lint           # golangci-lint run
 mise r docker         # multi-stage build, distroless/static final image, nonroot
+mise r release:snapshot  # local goreleaser snapshot (no publish), artifacts in dist/
 ```
 
-CI (this repo's own .gitlab-ci.yml): lint → test → build → image scan → push.
+CI is GitHub Actions (`.github/workflows/`), running the mise tasks via `jdx/mise-action` so CI and local use the same pinned toolchain:
+
+- `ci.yml` — on push to main and PRs: lint → test (race, incl. e2e) → build.
+- `release.yml` — on `v*` tags: `goreleaser release` publishes binaries (linux/darwin × amd64/arm64), archives, checksums and changelog as a GitHub release. Config in `.goreleaser.yaml`; the version is stamped into `main.version` (`bot --version`).
 
 ## Deployment
 

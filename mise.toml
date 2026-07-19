@@ -1,6 +1,7 @@
 [tools]
 go = "1.26.5"
 golangci-lint = "2.12.2"
+goreleaser = "2.17.0"
 
 [env]
 CGO_ENABLED = "0"
@@ -14,9 +15,18 @@ description = "Run all tests with the race detector"
 env = { CGO_ENABLED = "1" } # -race requires cgo
 run = "go test -race ./..."
 
+[tasks."test:e2e"]
+description = "Run only the end-to-end tests (mock GitLab + Prometheus), verbose"
+env = { CGO_ENABLED = "1" } # -race requires cgo
+run = "go test -race -v -count=1 ./internal/e2e/"
+
 [tasks.lint]
 description = "Run golangci-lint"
 run = "golangci-lint run"
+
+[tasks."release:snapshot"]
+description = "Build a local snapshot release with goreleaser (no publish)"
+run = "goreleaser release --snapshot --clean"
 
 [tasks.docker]
 description = "Build the container image (multi-stage, distroless, nonroot)"
