@@ -10,8 +10,11 @@ require (
 	gitlab.com/gitlab-org/api/client-go v1.46.0
 )
 
+require golang.org/x/term v0.45.0 // indirect
+
 require (
 	github.com/andybalholm/brotli v1.2.2 // indirect
+	github.com/charmbracelet/x/term v0.2.2
 	github.com/gofiber/schema v1.8.0 // indirect
 	github.com/gofiber/utils/v2 v2.1.1 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
@@ -34,7 +37,7 @@ require (
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
