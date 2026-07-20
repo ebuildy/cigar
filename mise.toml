@@ -2,6 +2,13 @@
 go = "1.26.5"
 golangci-lint = "2.12.2"
 goreleaser = "2.17.0"
+helm = "4.2"
+# Local dev-cluster stack (.dev/): a kind cluster running GitLab, agentgateway,
+# and a runner via .dev/helmfile.yaml.gotmpl. Docker or Podman (for kind's
+# node containers) isn't mise-managed; install it yourself.
+kind = "0.31.0"
+kubectl = "1.31.3"
+helmfile = "1.5.1"
 
 [env]
 CGO_ENABLED = "0"
@@ -35,3 +42,39 @@ run = "docker build -t gitlab-ci-resources-bot:latest ."
 [tasks.run]
 description = "Run the bot locally (expects env vars, see README)"
 run = "go run ./cmd/bot serve"
+
+[tasks."helm:template"]
+description = "Templatize Helm chart cigar"
+run = "helm template cigar deploy/chart/cigar"
+
+[tasks."helm:deploy"]
+description = "Install or update the Helm chart cigar"
+run = "helm upgrade --install cigar deploy/chart/cigar"
+
+[tasks."dev:up"]
+description = "Deploy the local dev-cluster stack (GitLab, agentgateway, cert-manager) to kind — see .dev/helmfile.yaml.gotmpl"
+run = "helmfile -f .dev/helmfile.yaml.gotmpl apply"
+
+[tasks."dev:down"]
+description = "Tear down the local dev-cluster stack"
+run = "helmfile -f .dev/helmfile.yaml.gotmpl destroy"
+
+[tasks."dev:setup-hosts"]
+description = "Add the *.kind.local hostnames (derived from the helmfile's HTTPRoutes) to /etc/hosts (idempotent, needs sudo)"
+run = ".dev/scripts/setup-hosts.sh"
+
+[tasks."dev:gitlab:root-password"]
+description = "Print the GitLab dev instance's initial root password (valid 24h after first boot)"
+run = "kubectl --context kind-kind-cluster -n gitlab exec deploy/gitlab -- cat /etc/gitlab/initial_root_password"
+
+[tasks."dev:gitlab:seed-example-project"]
+description = "Mirror a sample project into the dev GitLab instance (idempotent)"
+run = ".dev/scripts/seed-example-project.sh"
+
+[tasks."dev:gitlab:register-runner"]
+description = "Register a Kubernetes-executor instance runner and deploy gitlab-runner (idempotent)"
+run = ".dev/scripts/register-runner.sh"
+
+[tasks."dev:cigar:deploy"]
+description = "Build, load, and deploy cigar itself into the dev cluster, wired to dev GitLab + Prometheus, with its webhook registered on every project (idempotent)"
+run = ".dev/scripts/deploy-cigar.sh"

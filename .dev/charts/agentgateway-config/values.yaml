@@ -1,0 +1,24 @@
+# GatewayClass registered by the agentgateway control plane (release
+# "agentgateway" in this same namespace).
+gatewayClassName: agentgateway
+
+gateway:
+  name: gateway
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      # Lets HTTPRoutes in any namespace (e.g. the gitlab release) attach
+      # to this Gateway instead of only ones in agentgateway-system.
+      allowedRoutes:
+        namespaces:
+          from: All
+
+# This kind cluster was created with extraPortMappings publishing host
+# port 9090 -> node port 80 (and 9443 -> 443), presumably for a hostPort
+# ingress that was never installed. Binding the gateway proxy pod to
+# hostPort 80 makes it reachable at http://gitlab.kind.local:9090 with
+# nothing running on the Mac (no port-forward, no sudo) — see
+# AgentgatewayParameters below, referenced from the Gateway via
+# spec.infrastructure.parametersRef.
+hostPort: 80

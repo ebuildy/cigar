@@ -1,0 +1,192 @@
+# Default values for gitlab.
+# GitLab CE (Omnibus, single container) trimmed for local development —
+# e.g. a single-node kind cluster on a laptop. Not suitable for production.
+
+replicaCount: 1
+
+image:
+  repository: gitlab/gitlab-ce
+  pullPolicy: IfNotPresent
+  tag: "19.2.0-ce.0"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# The URL GitLab is reachable at. GitLab's bundled nginx binds whatever
+# port is embedded here (default 80 when omitted) — it must stay in sync
+# with service.port/containerPort/probes below, and with httpRoute.hostnames.
+# Exposed via the agentgateway Gateway (see ../agentgateway-config) at this
+# hostname; add "127.0.0.1 gitlab.kind.local" to /etc/hosts and port-forward
+# the Gateway's Service to reach it from the host.
+externalUrl: "http://gitlab.kind.local"
+
+# Pod network CIDR, so kubelet's liveness/readiness probes (which arrive
+# from the node's CNI gateway IP, not loopback) pass monitoring_whitelist
+# below. kind's default (kindnet) pod CIDR is 10.244.0.0/16; check yours
+# with: kubectl get nodes -o jsonpath='{.items[*].spec.podCIDR}'
+probeWhitelist: "10.244.0.0/16"
+
+# Raw gitlab.rb statements, rendered verbatim into the GITLAB_OMNIBUS_CONFIG
+# env var (via `tpl`, so .Values references work here). Defaults trim
+# GitLab down for a resource-constrained dev box: single Puma worker, low
+# Sidekiq concurrency, monitoring/registry/pages disabled.
+# See: https://docs.gitlab.com/omnibus/settings/memory_constrained_envs/
+omnibusConfig: |
+  external_url '{{ .Values.externalUrl }}'
+
+  # /-/liveness and /-/readiness are IP-restricted (default: loopback
+  # only). kubelet's HTTP probes arrive from the node's CNI gateway IP,
+  # not loopback, so without this every probe 404s regardless of whether
+  # GitLab is actually healthy. {{ .Values.probeWhitelist }} is the
+  # cluster's pod network CIDR (see values.yaml).
+  gitlab_rails['monitoring_whitelist'] = ['127.0.0.0/8', '{{ .Values.probeWhitelist }}']
+
+  # Single-process web server instead of Puma's default clustered mode.
+  puma['worker_processes'] = 0
+  sidekiq['concurrency'] = 5
+
+  # Skip components not needed for local dev (~300MB saved).
+  alertmanager['enable'] = false
+  gitlab_exporter['enable'] = false
+  gitlab_kas['enable'] = false
+  node_exporter['enable'] = false
+  postgres_exporter['enable'] = false
+  prometheus_monitoring['enable'] = false
+  prometheus['enable'] = false
+  puma['exporter_enabled'] = false
+  redis_exporter['enable'] = false
+  sidekiq['metrics_enabled'] = false
+  registry['enable'] = false
+  gitlab_pages['enable'] = false
+
+  # Return memory to the OS promptly instead of holding onto it.
+  gitlab_rails['env'] = { 'MALLOC_CONF' => 'dirty_decay_ms:1000,muzzy_decay_ms:1000' }
+  gitaly['env'] = { 'MALLOC_CONF' => 'dirty_decay_ms:1000,muzzy_decay_ms:1000' }
+
+serviceAccount:
+  create: true
+  # GitLab never calls the Kubernetes API; no need for the pod to carry a token.
+  automount: false
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+# The Omnibus image runs its own supervision (chef + runit) as root inside
+# the container and chowns /etc/gitlab, /var/opt/gitlab, /var/log/gitlab on
+# boot — it cannot run as a non-root/read-only-rootfs user.
+podSecurityContext: {}
+securityContext: {}
+
+service:
+  type: ClusterIP
+  port: 80
+
+# Disabled by default: a fresh kind cluster has no ingress controller or
+# LoadBalancer support, so `kubectl port-forward` (see NOTES.txt) is the
+# simplest way to reach GitLab. Flip this on once ingress-nginx is
+# installed and the kind cluster's extraPortMappings expose 80/443.
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations: {}
+  hosts:
+    - host: gitlab.kind.local
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  tls: []
+
+# Exposed via the agentgateway Gateway (chart: ../agentgateway-config),
+# which lives in a different namespace, so the Gateway's own listener
+# (allowedRoutes.namespaces.from: All) is what permits this cross-namespace
+# attachment.
+httpRoute:
+  enabled: true
+  annotations: {}
+  parentRefs:
+  - name: gateway
+    namespace: agentgateway-system
+    sectionName: http
+  hostnames:
+  - gitlab.kind.local
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+
+# GitLab's first boot (chef-client reconfigure + DB migrations) commonly
+# takes several minutes even with the trimmed-down omnibusConfig above.
+# The startupProbe gives it that room before liveness/readiness apply and
+# can restart or block traffic to the pod.
+startupProbe:
+  httpGet:
+    path: /-/readiness
+    port: http
+  periodSeconds: 10
+  failureThreshold: 60 # ~10 minutes to come up
+
+livenessProbe:
+  httpGet:
+    path: /-/liveness
+    port: http
+  periodSeconds: 30
+  timeoutSeconds: 10
+  failureThreshold: 5
+
+readinessProbe:
+  httpGet:
+    path: /-/readiness
+    port: http
+  periodSeconds: 10
+  timeoutSeconds: 10
+  failureThreshold: 5
+
+# GitLab needs roughly 4GB even trimmed down (see
+# https://docs.gitlab.com/install/requirements/). These defaults target a
+# single-node kind cluster on a laptop; raise them if the pod OOMKills.
+resources:
+  requests:
+    cpu: "1"
+    memory: 3Gi
+  limits:
+    cpu: "3"
+    memory: 4Gi
+
+# Persistent storage for /etc/gitlab, /var/opt/gitlab, /var/log/gitlab so
+# config/repos/DB survive pod restarts. kind ships a default "standard"
+# StorageClass (local-path-provisioner) out of the box — leave
+# storageClassName empty to use it.
+persistence:
+  enabled: true
+  storageClassName: ""
+  config:
+    size: 1Gi
+  data:
+    size: 8Gi
+  logs:
+    size: 1Gi
+
+# GitLab's bundled services expect a bigger /dev/shm than Docker/K8s'
+# default 64Mi, even with monitoring disabled at the gitlab.rb level above.
+shm:
+  sizeLimit: 256Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+# Additional volumes/volumeMounts on the Deployment, appended after the
+# config/data/logs/shm mounts managed by this chart.
+volumes: []
+volumeMounts: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

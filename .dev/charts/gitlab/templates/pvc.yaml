@@ -1,0 +1,20 @@
+{{- if .Values.persistence.enabled -}}
+{{- range $name, $spec := (dict "config" .Values.persistence.config "data" .Values.persistence.data "logs" .Values.persistence.logs) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "gitlab.fullname" $ }}-{{ $name }}
+  labels:
+    {{- include "gitlab.labels" $ | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with $.Values.persistence.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $spec.size }}
+{{- end }}
+{{- end }}

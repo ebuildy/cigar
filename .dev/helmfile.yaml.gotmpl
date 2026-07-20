@@ -1,0 +1,229 @@
+# Dev-cluster stack for a local kind cluster on a laptop:
+#   cert-manager -> Gateway API CRDs -> agentgateway (CRDs + control plane)
+#   -> Gateway resource -> gitlab (HTTPRoute) -> gitlab-runner
+#
+# Usage (Helmfile v1 only Go-templates .gotmpl files, hence the extension):
+#   helmfile -f .dev/helmfile.yaml.gotmpl apply
+#
+# gitlab-runner is skipped until GITLAB_RUNNER_TOKEN is exported (see the
+# release below for how to obtain it) — everything else deploys unconditionally.
+
+helmDefaults:
+  kubeContext: kind-kind-cluster
+  wait: true
+  timeout: 600
+
+repositories:
+  - name: jetstack
+    url: https://charts.jetstack.io
+  - name: gitlab
+    url: https://charts.gitlab.io
+  - name: prometheus-community
+    url: https://prometheus-community.github.io/helm-charts
+
+releases:
+  # Already running in this cluster (installed manually, not by this
+  # helmfile) — pinned to the exact chart version/defaults it was
+  # installed with so `helmfile diff` adopts it as a no-op.
+  - name: cert-manager
+    namespace: cert-manager
+    createNamespace: true
+    chart: jetstack/cert-manager
+    version: v1.20.0
+
+  # Gateway API CRDs are upstream (sigs.k8s.io/gateway-api), not
+  # distributed as a Helm chart yet, so they're applied as a presync hook
+  # on the first release that needs them.
+  - name: agentgateway-crds
+    namespace: agentgateway-system
+    createNamespace: true
+    chart: oci://cr.agentgateway.dev/charts/agentgateway-crds
+    version: 1.4.0-alpha.1
+    hooks:
+      - events: ["presync"]
+        showlogs: true
+        command: kubectl
+        args:
+          - "apply"
+          - "--server-side"
+          - "-f"
+          - "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.6.0/experimental-install.yaml"
+
+  # Control plane: registers the "agentgateway" GatewayClass and turns
+  # each Gateway resource using it into a running proxy.
+  - name: agentgateway
+    namespace: agentgateway-system
+    chart: oci://cr.agentgateway.dev/charts/agentgateway
+    version: 1.4.0-alpha.1
+    needs:
+      - agentgateway-system/agentgateway-crds
+
+  # The actual Gateway resource (gatewayClassName: agentgateway) that
+  # HTTPRoutes attach to — see .dev/charts/agentgateway-config.
+  - name: agentgateway-config
+    namespace: agentgateway-system
+    chart: ./charts/agentgateway-config
+    needs:
+      - agentgateway-system/agentgateway
+
+  # GitLab CE (Omnibus), exposed at http://gitlab.kind.local via the
+  # Gateway above through an HTTPRoute — see .dev/charts/gitlab.
+  - name: gitlab
+    namespace: gitlab
+    createNamespace: true
+    chart: ./charts/gitlab
+    # `helm upgrade --wait` + Recreate + progressDeadlineSeconds is prone
+    # to sampling a stale ProgressDeadlineExceeded condition right after
+    # submitting a new rollout and failing instantly instead of watching
+    # it converge. Apply without blocking; check `kubectl get pods -n
+    # gitlab -w` (or the startupProbe/progressDeadlineSeconds budget in
+    # the chart) for actual first-boot progress.
+    wait: false
+    needs:
+      - agentgateway-system/agentgateway-config
+
+  # Registers CI runners against the gitlab release above using the
+  # Kubernetes executor. Skipped (installed: false) until a runner
+  # authentication token is supplied, since gitlab-runner has nothing
+  # valid to register with before that:
+  #   1. helm install/upgrade everything else first (see below).
+  #   2. Sign in to GitLab as root (password: see gitlab chart's
+  #      NOTES.txt), then Admin Area > CI/CD > Runners > "New instance
+  #      runner" to create a runner and copy its "glrt-..." token.
+  #   3. export GITLAB_RUNNER_TOKEN=glrt-...
+  #   4. helmfile -f .dev/helmfile.yaml.gotmpl apply -l name=gitlab-runner
+  #
+  # Job pods (and the runner manager pod itself) resolve gitlab.kind.local
+  # via hostAliases pinned to the agentgateway Gateway's Service ClusterIP
+  # (10.96.194.60 as of this writing) — a real DNS/ingress path isn't
+  # available on this kind cluster, so this is hardcoded rather than
+  # looked up dynamically. Override via AGENTGATEWAY_CLUSTER_IP if the
+  # Gateway's Service is ever deleted and recreated (its ClusterIP can
+  # change); get the current one with:
+  #   kubectl --context kind-kind-cluster -n agentgateway-system get svc \
+  #     -l gateway.networking.k8s.io/gateway-name=gateway \
+  #     -o jsonpath='{.items[0].spec.clusterIP}'
+  - name: gitlab-runner
+    namespace: gitlab-runner
+    createNamespace: true
+    chart: gitlab/gitlab-runner
+    version: 0.91.0
+    installed: {{ ne (env "GITLAB_RUNNER_TOKEN" | default "") "" }}
+    needs:
+      - gitlab/gitlab
+    values:
+      - gitlabUrl: http://gitlab.kind.local
+        runnerToken: {{ env "GITLAB_RUNNER_TOKEN" | default "" | quote }}
+        concurrent: 2
+        rbac:
+          create: true
+        serviceAccount:
+          create: true
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        hostAliases:
+          - ip: {{ env "AGENTGATEWAY_CLUSTER_IP" | default "10.96.194.60" | quote }}
+            hostnames:
+              - gitlab.kind.local
+        runners:
+          config: |
+            [[runners]]
+              [runners.kubernetes]
+                namespace = "gitlab-runner"
+                image = "alpine:3.21"
+                # The runner's own arch auto-detection resolves to
+                # "x86_64-<version>" even when running arm64 (observed on
+                # kind/Apple Silicon) — pin explicitly rather than rely on
+                # it. Swap the arch prefix if your build host differs.
+                helper_image = "registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:arm64-v19.2.0"
+                [[runners.kubernetes.host_aliases]]
+                  ip = {{ env "AGENTGATEWAY_CLUSTER_IP" | default "10.96.194.60" | quote }}
+                  hostnames = ["gitlab.kind.local"]
+
+  # Minimal Prometheus for cigar to query: cadvisor comes free from every
+  # kubelet (server's default scrape config already includes the
+  # kubernetes-nodes-cadvisor job), kube-state-metrics (subchart, kept
+  # enabled) supplies request/limit metrics. alertmanager/node-exporter/
+  # pushgateway are default-enabled upstream but unneeded here.
+  - name: prometheus
+    namespace: monitoring
+    createNamespace: true
+    chart: prometheus-community/prometheus
+    version: 29.18.0
+    needs:
+      - agentgateway-system/agentgateway-config
+    values:
+      - alertmanager:
+          enabled: false
+        prometheus-node-exporter:
+          enabled: false
+        prometheus-pushgateway:
+          enabled: false
+        kube-state-metrics:
+          enabled: true
+        server:
+          persistentVolume:
+            enabled: false
+          retention: 6h
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          # Exposed for convenience (browsing the UI, poking at PromQL) —
+          # cigar itself talks to the in-cluster Service directly, not
+          # through this. Same cross-namespace attachment as gitlab's
+          # HTTPRoute: the Gateway lives in agentgateway-system.
+          route:
+            main:
+              enabled: true
+              parentRefs:
+                - name: gateway
+                  namespace: agentgateway-system
+                  sectionName: http
+              hostnames:
+                - prometheus.kind.local
+
+  # The bot itself (see ../../deploy/chart/cigar and CLAUDE.md). Unlike
+  # the other releases, this isn't self-sufficient: it needs a locally
+  # built+kind-loaded image and a Secret (WEBHOOK_SECRET + GITLAB_TOKEN)
+  # that don't exist until .dev/scripts/deploy-cigar.sh creates them, so
+  # apply this release through that script (mise r dev:cigar:deploy)
+  # rather than a bare `helmfile apply` covering every release.
+  - name: cigar
+    namespace: cigar
+    createNamespace: true
+    chart: ../deploy/chart/cigar
+    needs:
+      - gitlab/gitlab
+      - monitoring/prometheus
+    values:
+      - image:
+          repository: cigar
+          tag: dev
+          pullPolicy: Never
+        config:
+          gitlabUrl: http://gitlab.kind.local
+          prometheusUrl: http://prometheus-server.monitoring.svc:80
+        secrets:
+          existingSecret: cigar-secrets
+        # Same reason as gitlab-runner's host_aliases above: gitlab.kind.local
+        # doesn't resolve inside pods without this on this cluster.
+        hostAliases:
+          - ip: {{ env "AGENTGATEWAY_CLUSTER_IP" | default "10.96.194.60" | quote }}
+            hostnames:
+              - gitlab.kind.local
+        # The chart's default NetworkPolicy egress rule only allows GitLab
+        # on :443, but our dev GitLab is plain HTTP on :80 — and this is a
+        # throwaway local cluster with no real pod-to-pod threat model, so
+        # disable it outright rather than fight the CIDR/port/selector
+        # overrides that'd otherwise be needed.
+        networkPolicy:
+          enabled: false

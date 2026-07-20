@@ -1,0 +1,39 @@
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayParameters
+metadata:
+  name: {{ .Values.gateway.name }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  deployment:
+    spec:
+      # hostPort means only one pod can ever bind port 80 on this
+      # single-node kind cluster; RollingUpdate's default (25% surge)
+      # tries to schedule the new pod before the old one vacates the
+      # port, which deadlocks (FailedScheduling: "didn't have free
+      # ports"). maxSurge: 0 forces the old pod to terminate first.
+      # (type: Recreate would be cleaner, but this controller's overlay
+      # merge doesn't honor the documented `$patch: delete` needed to
+      # also clear the generated rollingUpdate block, and the API server
+      # rejects type: Recreate + rollingUpdate together — so overriding
+      # the existing rollingUpdate's fields directly, without touching
+      # type, sidesteps that bug.)
+      strategy:
+        rollingUpdate:
+          maxSurge: 0
+          maxUnavailable: 1
+      template:
+        spec:
+          containers:
+            - name: agentgateway
+              ports:
+                - name: host-http
+                  containerPort: 80
+                  hostPort: {{ .Values.hostPort }}
+                  protocol: TCP
+  # No LoadBalancer implementation on kind; hostPort above is the real
+  # access path, so avoid the confusing perpetual <pending> external IP.
+  service:
+    spec:
+      type: ClusterIP

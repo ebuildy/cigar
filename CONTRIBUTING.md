@@ -37,6 +37,65 @@ mise r release:snapshot  # local goreleaser dry run, artifacts in dist/
 
 Tool versions are deliberately pinned in `mise.toml`. If you bump one, do it in its own commit and make sure `mise r lint test build` still passes.
 
+## Local dev cluster (optional)
+
+`.dev/` holds a [Helmfile](https://helmfile.readthedocs.io) stack for exercising the bot against a real self-managed GitLab instance in a local [kind](https://kind.sigs.k8s.io) cluster, instead of only the e2e suite's mocks: cert-manager, [agentgateway](https://agentgateway.dev) (a Gateway API implementation) fronting GitLab CE (Omnibus) at `http://gitlab.kind.local`, and `gitlab-runner`. `kind`, `kubectl`, and `helmfile` are pinned in [mise.toml](mise.toml); you still need Docker or Podman installed yourself for kind's node containers.
+
+If you don't already have a kind cluster, create one with host ports published for `agentgateway`'s Gateway (see below for why):
+
+```sh
+cat <<'EOF' | kind create cluster --name kind-cluster --config -
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 9090
+      - containerPort: 443
+        hostPort: 9443
+EOF
+```
+
+Bring up the stack (idempotent — safe to rerun):
+
+```sh
+mise r dev:up
+```
+
+GitLab's first boot (chef reconfigure + DB migrations) takes several minutes; `kubectl get pods -n gitlab -w` shows progress. Once ready:
+
+```sh
+echo "127.0.0.1 gitlab.kind.local prometheus.kind.local" | sudo tee -a /etc/hosts   # one-time
+mise r dev:gitlab:root-password                                # sign in as "root"
+```
+
+`http://gitlab.kind.local:9090` should now load — no `kubectl port-forward` needed. That works because the kind node's own port 80 is bound directly by the agentgateway proxy pod (`hostPort`, configured declaratively via the `AgentgatewayParameters` resource in [.dev/charts/agentgateway-config](.dev/charts/agentgateway-config)), and the cluster's `extraPortMappings` above publish that node port to your machine.
+
+To register a Kubernetes-executor CI runner (via the API — no manual UI step needed):
+
+```sh
+mise r dev:gitlab:register-runner
+```
+
+Idempotent: if a `dev-k8s-runner` instance runner already exists, it's left alone (runner auth tokens, like PATs, are only ever shown once — delete it in **Admin Area → CI/CD → Runners** first to re-register from scratch). To seed an example project with a working pipeline to run against it:
+
+```sh
+mise r dev:gitlab:seed-example-project
+```
+
+Finally, to see the bot itself running against this instance — builds the image, loads it into kind, deploys a minimal Prometheus (cadvisor + kube-state-metrics) alongside it, and registers its webhook on every project (GitLab CE has no instance/group-wide pipeline webhook, so this is per-project; rerun after creating new projects to cover them too):
+
+```sh
+mise r dev:cigar:deploy
+```
+
+```sh
+kubectl --context kind-kind-cluster -n cigar logs -f deploy/cigar
+```
+
+Tear down with `mise r dev:down`. See the comments in [.dev/helmfile.yaml.gotmpl](.dev/helmfile.yaml.gotmpl) for the full release graph and troubleshooting notes (e.g. why `gitlab`'s Deployment uses `strategy: Recreate` and a 900s `progressDeadlineSeconds`, and why the runner's `helper_image` is pinned to an `arm64` tag).
+
 ## Before opening a PR
 
 The definition of done (see [CLAUDE.md](CLAUDE.md) for the full list):

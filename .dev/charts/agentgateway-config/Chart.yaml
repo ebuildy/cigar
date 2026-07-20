@@ -1,0 +1,5 @@
+apiVersion: v2
+name: agentgateway-config
+description: Gateway API Gateway resource for the agentgateway GatewayClass, shared by HTTPRoutes across namespaces (e.g. the gitlab chart)
+type: application
+version: 0.1.0

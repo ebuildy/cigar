@@ -120,7 +120,15 @@ Releases are handled by [GoReleaser](https://goreleaser.com): push a `v*` tag an
 
 ## Deployment
 
-Helm chart in `deploy/chart/`: Deployment (2 replicas, PDB), Service, Ingress (TLS), NetworkPolicy (egress only to GitLab + Prometheus), resource requests/limits set (practice what we preach), `runAsNonRoot`, read-only rootfs, seccomp `RuntimeDefault`.
+Helm chart in `deploy/chart/cigar`: Deployment (2 replicas, PDB), Service, Ingress (TLS), NetworkPolicy (egress restricted to DNS, GitLab and Prometheus), resource requests/limits set (practice what we preach), `runAsNonRoot` (distroless uid 65532), read-only rootfs, seccomp `RuntimeDefault`.
+
+```sh
+helm install cigar deploy/chart/cigar \
+  --set config.prometheusUrl=http://prometheus-operated.monitoring.svc:9090 \
+  --set secrets.existingSecret=cigar   # Secret with keys WEBHOOK_SECRET + GITLAB_TOKEN
+```
+
+All bot env vars map to `config.*` values; secrets come from an existing Secret (recommended) or `secrets.webhookSecret`/`secrets.gitlabToken`. The NetworkPolicy defaults allow egress to any host on 443 (gitlab.com has no stable CIDR) and to an in-cluster Prometheus in the `monitoring` namespace — tighten `networkPolicy.*` to your environment.
 
 ## Status
 

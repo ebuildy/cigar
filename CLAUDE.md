@@ -110,7 +110,7 @@ CI is GitHub Actions (`.github/workflows/`), running the mise tasks via `jdx/mis
 
 ## Deployment
 
-Helm chart in `deploy/chart/`: Deployment (2 replicas, PDB), Service, Ingress (TLS), NetworkPolicy (egress only to GitLab + Prometheus), resources set (practice what we preach), `runAsNonRoot`, read-only rootfs, seccomp `RuntimeDefault`.
+Helm chart in `deploy/chart/cigar`: Deployment (2 replicas, PDB), Service (http 8080 + ops 8081), Ingress (TLS), NetworkPolicy (ingress limited to the two ports; egress only DNS + GitLab + Prometheus), resources set (practice what we preach), `runAsNonRoot` uid 65532, read-only rootfs, seccomp `RuntimeDefault`, no SA token automount. Env vars map to `config.*` values; `WEBHOOK_SECRET`/`GITLAB_TOKEN` come from `secrets.existingSecret` (or a chart-managed Secret). Image: `ghcr.io/ebuildy/cigar`, tag defaults to `appVersion`. Validate chart changes with `helm lint` + `helm template` (IDE YAML errors on Go template syntax are noise).
 
 ## Definition of done for changes
 
