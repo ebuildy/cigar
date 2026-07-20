@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "cigar.fullname" . }}-test-connection"
+  labels:
+    {{- include "cigar.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+spec:
+  containers:
+    - name: wget
+      image: busybox
+      command: ['wget']
+      args: ['-qO-', '{{ include "cigar.fullname" . }}:{{ .Values.service.opsPort }}/healthz']
+  restartPolicy: Never

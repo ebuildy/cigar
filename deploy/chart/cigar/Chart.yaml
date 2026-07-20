@@ -1,0 +1,15 @@
+apiVersion: v2
+name: cigar
+description: >-
+  Reports GitLab CI pipeline resource usage (CPU, memory, throttling, network)
+  as merge request comments, from Prometheus/cadvisor metrics.
+type: application
+home: https://github.com/ebuildy/cigar
+sources:
+  - https://github.com/ebuildy/cigar
+
+# Chart version — bump on any chart change.
+version: 0.1.0
+
+# Version of the bot image deployed by default (see image.tag).
+appVersion: "0.1.0"

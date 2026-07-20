@@ -1,0 +1,168 @@
+# Default values for cigar.
+
+# Two replicas + PodDisruptionBudget: survive node drains.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/ebuildy/cigar
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+# Bot configuration (maps 1:1 to the env vars documented in the README).
+config:
+  # GitLab instance base URL.
+  gitlabUrl: "https://gitlab.com"
+  # Prometheus base URL — must scrape cadvisor and kube-state-metrics.
+  prometheusUrl: "http://prometheus-operated.monitoring.svc:9090"
+  # Throttled-periods ratio above which a job gets a throttling warning.
+  throttleWarnRatio: "0.25"
+  # Prometheus scrape interval; query windows are padded by one interval.
+  scrapeInterval: "30s"
+  # debug, info, warn, error.
+  logLevel: "info"
+
+secrets:
+  # Name of an existing Secret holding the keys WEBHOOK_SECRET and
+  # GITLAB_TOKEN. Recommended (sealed-secrets, external-secrets, ...).
+  existingSecret: ""
+  # Alternatively set the values here and the chart creates the Secret
+  # itself. Avoid committing real values to git.
+  webhookSecret: ""
+  gitlabToken: ""
+
+# Extra environment variables for the bot container.
+extraEnv: []
+#  - name: LISTEN_ADDR
+#    value: ":8080"
+
+# Static /etc/hosts entries for the pod. Not needed against a normal
+# GitLab instance with real DNS; useful for environments (e.g. some local
+# dev clusters) where a hostname resolves differently — or not at all —
+# inside the cluster than it does wherever config.gitlabUrl's host is
+# otherwise expected to resolve.
+#  - ip: "10.96.194.60"
+#    hostnames:
+#      - gitlab.kind.local
+hostAliases: []
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  # The bot talks only to GitLab and Prometheus — no Kubernetes API access.
+  automount: false
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+# Distroless nonroot user.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  # Webhook port.
+  port: 8080
+  # Health + metrics port.
+  opsPort: 8081
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: cigar.example.com
+      paths:
+        - path: /webhook
+          pathType: Prefix
+  tls: []
+    # - secretName: cigar-tls
+    #   hosts:
+    #     - cigar.example.com
+
+# Expose the service via gateway-api HTTPRoute instead of Ingress.
+httpRoute:
+  enabled: false
+  annotations: {}
+  parentRefs:
+    - name: gateway
+      sectionName: http
+  hostnames:
+    - cigar.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /webhook
+
+# Practice what we preach.
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 128Mi
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: ops
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: ops
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+networkPolicy:
+  enabled: true
+  # Sources allowed to reach the webhook (8080) and ops (8081) ports,
+  # e.g. your ingress controller and Prometheus (for /metrics scrapes).
+  # Empty list = any source.
+  ingressFrom: []
+  #  - namespaceSelector:
+  #      matchLabels:
+  #        kubernetes.io/metadata.name: ingress-nginx
+  # Egress to GitLab over HTTPS. gitlab.com has no stable CIDR, hence the
+  # default; tighten it for a self-hosted instance.
+  gitlab:
+    cidr: 0.0.0.0/0
+    port: 443
+  # Egress to the in-cluster Prometheus (must match config.prometheusUrl).
+  prometheus:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: monitoring
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: prometheus
+    port: 9090
+  # Additional egress rules (raw NetworkPolicy egress entries).
+  extraEgress: []
+
+volumes: []
+volumeMounts: []
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -1,0 +1,52 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "cigar.fullname" . }}
+  labels:
+    {{- include "cigar.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "cigar.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Webhook + ops ports only.
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.service.port }}
+        - protocol: TCP
+          port: {{ .Values.service.opsPort }}
+      {{- with .Values.networkPolicy.ingressFrom }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  egress:
+    # DNS.
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # GitLab API.
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.networkPolicy.gitlab.cidr }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.gitlab.port }}
+    # Prometheus.
+    - to:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.prometheus.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml .Values.networkPolicy.prometheus.podSelector | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.prometheus.port }}
+    {{- with .Values.networkPolicy.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
