@@ -6,32 +6,36 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
 type Config struct {
-	WebhookSecret     string
-	GitLabURL         string
-	GitLabToken       string
-	PrometheusURL     string
-	ThrottleWarnRatio float64
-	ScrapeInterval    time.Duration
-	ListenAddr        string
-	OpsAddr           string
-	LogLevel          string
+	WebhookSecret       string
+	WebhookSigningToken string
+	AuthMethods         []string
+	GitLabURL           string
+	GitLabToken         string
+	PrometheusURL       string
+	ThrottleWarnRatio   float64
+	ScrapeInterval      time.Duration
+	ListenAddr          string
+	OpsAddr             string
+	LogLevel            string
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		WebhookSecret:     os.Getenv("WEBHOOK_SECRET"),
-		GitLabURL:         getenv("GITLAB_URL", "https://gitlab.com"),
-		GitLabToken:       os.Getenv("GITLAB_TOKEN"),
-		PrometheusURL:     os.Getenv("PROMETHEUS_URL"),
-		ThrottleWarnRatio: 0.25,
-		ScrapeInterval:    30 * time.Second,
-		ListenAddr:        getenv("LISTEN_ADDR", ":8080"),
-		OpsAddr:           getenv("OPS_ADDR", ":8081"),
-		LogLevel:          getenv("LOG_LEVEL", "info"),
+		WebhookSecret:       os.Getenv("WEBHOOK_SECRET"),
+		WebhookSigningToken: os.Getenv("WEBHOOK_SIGNING_TOKEN"),
+		GitLabURL:           getenv("GITLAB_URL", "https://gitlab.com"),
+		GitLabToken:         os.Getenv("GITLAB_TOKEN"),
+		PrometheusURL:       os.Getenv("PROMETHEUS_URL"),
+		ThrottleWarnRatio:   0.25,
+		ScrapeInterval:      30 * time.Second,
+		ListenAddr:          getenv("LISTEN_ADDR", ":8080"),
+		OpsAddr:             getenv("OPS_ADDR", ":8081"),
+		LogLevel:            getenv("LOG_LEVEL", "info"),
 	}
 
 	if v := os.Getenv("THROTTLE_WARN_RATIO"); v != "" {
@@ -59,6 +63,13 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("missing required environment variable %s", name)
 		}
 	}
+
+	methods, err := parseAuthMethods(os.Getenv("AUTH_METHODS"))
+	if err != nil {
+		return nil, err
+	}
+	cfg.AuthMethods = methods
+
 	return cfg, nil
 }
 
@@ -67,4 +78,30 @@ func getenv(key, def string) string {
 		return v
 	}
 	return def
+}
+
+var validAuthMethods = map[string]bool{"secret": true, "signature": true}
+
+// parseAuthMethods parses the comma-separated, ordered AUTH_METHODS list.
+// Order is significant (the handler tries methods in this order). An empty
+// value defaults to the legacy ["secret"] for backward compatibility.
+func parseAuthMethods(raw string) ([]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return []string{"secret"}, nil
+	}
+	var methods []string
+	for _, part := range strings.Split(raw, ",") {
+		m := strings.ToLower(strings.TrimSpace(part))
+		if m == "" {
+			continue
+		}
+		if !validAuthMethods[m] {
+			return nil, fmt.Errorf("AUTH_METHODS: unknown method %q (allowed: secret, signature)", m)
+		}
+		methods = append(methods, m)
+	}
+	if len(methods) == 0 {
+		return nil, fmt.Errorf("AUTH_METHODS is set but lists no valid methods")
+	}
+	return methods, nil
 }
