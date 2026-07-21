@@ -6,7 +6,6 @@
 package webhook
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
 	"time"
@@ -25,6 +24,7 @@ type PipelineEvent struct {
 	ObjectAttributes struct {
 		ID     int64  `json:"id"`
 		Status string `json:"status"`
+		Ref    string `json:"ref"` // branch (or tag) the pipeline ran on
 	} `json:"object_attributes"`
 	Project struct {
 		ID int64 `json:"id"`
@@ -40,28 +40,37 @@ type Enqueuer interface {
 	Enqueue(ev PipelineEvent) bool
 }
 
-// NewApp builds the webhook Fiber app: POST /webhook with token validation,
-// event filtering and a 1 MiB body limit.
-func NewApp(secret string, queue Enqueuer, log *slog.Logger) *fiber.App {
+// NewApp builds the webhook Fiber app: POST /webhook authenticated by the
+// given authenticators (tried in order, first success wins), with event
+// filtering and a 1 MiB body limit.
+func NewApp(auths []Authenticator, queue Enqueuer, log *slog.Logger) *fiber.App {
 	app := fiber.New(fiber.Config{
 		BodyLimit:    maxBodyBytes,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	})
-	h := &handler{secret: []byte(secret), queue: queue, log: log}
+	h := &handler{auths: auths, queue: queue, log: log}
 	app.Post("/webhook", h.handle)
 	return app
 }
 
 type handler struct {
-	secret []byte
-	queue  Enqueuer
-	log    *slog.Logger
+	auths []Authenticator
+	queue Enqueuer
+	log   *slog.Logger
+}
+
+func (h *handler) authenticate(c fiber.Ctx) bool {
+	for _, a := range h.auths {
+		if a.Authenticate(c) {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *handler) handle(c fiber.Ctx) error {
-	token := []byte(c.Get("X-Gitlab-Token"))
-	if subtle.ConstantTimeCompare(token, h.secret) != 1 {
+	if !h.authenticate(c) {
 		return c.SendStatus(fiber.StatusUnauthorized) // deliberately no body detail
 	}
 
@@ -75,7 +84,9 @@ func (h *handler) handle(c fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusBadRequest)
 	}
 
-	if !terminalStatuses[ev.ObjectAttributes.Status] || ev.MergeRequest == nil {
+	// merge_request may be nil when the branch was pushed before the MR was
+	// created; the worker resolves the MR from object_attributes.ref.
+	if !terminalStatuses[ev.ObjectAttributes.Status] {
 		return c.SendStatus(fiber.StatusOK)
 	}
 

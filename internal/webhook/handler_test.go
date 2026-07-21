@@ -5,8 +5,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 )
@@ -28,7 +30,7 @@ func (q *fakeQueue) Enqueue(ev PipelineEvent) bool {
 
 const validPayload = `{
 	"object_kind": "pipeline",
-	"object_attributes": {"id": 42, "status": "success"},
+	"object_attributes": {"id": 42, "status": "success", "ref": "feature-x"},
 	"project": {"id": 7},
 	"merge_request": {"iid": 3}
 }`
@@ -43,10 +45,11 @@ func TestHandler(t *testing.T) {
 		queueFull  bool
 		wantStatus int
 		wantQueued int
+		wantRef    string // expected ObjectAttributes.Ref on the queued event
 	}{
 		{
 			name: "valid terminal pipeline with MR is enqueued",
-			body: validPayload, wantStatus: http.StatusOK, wantQueued: 1,
+			body: validPayload, wantStatus: http.StatusOK, wantQueued: 1, wantRef: "feature-x",
 		},
 		{
 			name:  "missing token",
@@ -66,9 +69,9 @@ func TestHandler(t *testing.T) {
 			wantStatus: http.StatusOK,
 		},
 		{
-			name: "no merge request ignored",
-			body: `{"object_attributes":{"id":1,"status":"success"}}`,
-			wantStatus: http.StatusOK,
+			name: "terminal pipeline without MR is enqueued (branch pushed before MR)",
+			body: `{"object_attributes":{"id":42,"status":"success","ref":"feature-x"}}`,
+			wantStatus: http.StatusOK, wantQueued: 1, wantRef: "feature-x",
 		},
 		{
 			name: "malformed JSON",
@@ -104,7 +107,7 @@ func TestHandler(t *testing.T) {
 			}
 
 			queue := &fakeQueue{full: tt.queueFull}
-			app := NewApp(secret, queue, slog.New(slog.DiscardHandler))
+			app := NewApp([]Authenticator{NewSecretAuth(secret)}, queue, slog.New(slog.DiscardHandler))
 
 			req := httptest.NewRequest(method, "/webhook", strings.NewReader(tt.body))
 			req.Header.Set("X-Gitlab-Token", token)
@@ -121,8 +124,13 @@ func TestHandler(t *testing.T) {
 			if len(queue.events) != tt.wantQueued {
 				t.Fatalf("queued = %d, want %d", len(queue.events), tt.wantQueued)
 			}
-			if tt.wantQueued == 1 && queue.events[0].ObjectAttributes.ID != 42 {
-				t.Fatalf("queued pipeline id = %d, want 42", queue.events[0].ObjectAttributes.ID)
+			if tt.wantQueued == 1 {
+				if queue.events[0].ObjectAttributes.ID != 42 {
+					t.Fatalf("queued pipeline id = %d, want 42", queue.events[0].ObjectAttributes.ID)
+				}
+				if queue.events[0].ObjectAttributes.Ref != tt.wantRef {
+					t.Fatalf("queued ref = %q, want %q", queue.events[0].ObjectAttributes.Ref, tt.wantRef)
+				}
 			}
 		})
 	}
@@ -132,7 +140,7 @@ func TestHandler(t *testing.T) {
 // which app.Test cannot observe, so this test drives a real listener.
 func TestOversizedBodyRejected(t *testing.T) {
 	queue := &fakeQueue{}
-	app := NewApp(secret, queue, slog.New(slog.DiscardHandler))
+	app := NewApp([]Authenticator{NewSecretAuth(secret)}, queue, slog.New(slog.DiscardHandler))
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -163,5 +171,44 @@ func TestOversizedBodyRejected(t *testing.T) {
 	}
 	if len(queue.events) != 0 {
 		t.Fatalf("queued = %d, want 0", len(queue.events))
+	}
+}
+
+// TestHandlerAuthOrdering proves first-match-wins across an ordered list and
+// that a request valid only under a non-enabled method is rejected.
+func TestHandlerAuthOrdering(t *testing.T) {
+	sig, err := NewSignatureAuth(testSigningToken(), 5*time.Minute)
+	if err != nil {
+		t.Fatalf("NewSignatureAuth: %v", err)
+	}
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+
+	// signature-only app accepts a signed request but rejects a secret-only one.
+	app := NewApp([]Authenticator{sig}, &fakeQueue{}, slog.New(slog.DiscardHandler))
+
+	signed := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(validPayload))
+	signed.Header.Set("webhook-id", "m1")
+	signed.Header.Set("webhook-timestamp", ts)
+	signed.Header.Set("webhook-signature", signBody("m1", ts, validPayload))
+	signed.Header.Set("X-Gitlab-Event", "Pipeline Hook")
+	resp, err := app.Test(signed)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("signed request: status %d, want 200", resp.StatusCode)
+	}
+
+	secretOnly := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(validPayload))
+	secretOnly.Header.Set("X-Gitlab-Token", secret)
+	secretOnly.Header.Set("X-Gitlab-Event", "Pipeline Hook")
+	resp2, err := app.Test(secretOnly)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	_ = resp2.Body.Close()
+	if resp2.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("secret request against signature-only app: status %d, want 401", resp2.StatusCode)
 	}
 }
