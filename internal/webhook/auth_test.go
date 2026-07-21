@@ -60,6 +60,15 @@ func TestSecretAuth(t *testing.T) {
 	if got := runAuth(t, a, "", func(r *http.Request) {}); got != 401 {
 		t.Fatalf("missing token: status %d, want 401", got)
 	}
+
+	// An empty configured secret must never authenticate, even with an empty header.
+	empty := NewSecretAuth("")
+	if got := runAuth(t, empty, "", func(r *http.Request) {}); got != 401 {
+		t.Fatalf("empty secret, no token: status %d, want 401", got)
+	}
+	if got := runAuth(t, empty, "", func(r *http.Request) { r.Header.Set("X-Gitlab-Token", "") }); got != 401 {
+		t.Fatalf("empty secret, empty token: status %d, want 401", got)
+	}
 }
 
 func TestSignatureAuth(t *testing.T) {
@@ -121,6 +130,35 @@ func TestSignatureAuth(t *testing.T) {
 		r.Header.Set("webhook-signature", "v1,deadbeef "+signBody("msg_1", ts, body))
 	}); got != 200 {
 		t.Fatalf("multi-entry header: status %d, want 200", got)
+	}
+
+	// Future-skew beyond tolerance.
+	if got := runAuth(t, a, body, func(r *http.Request) {
+		ts := strconv.FormatInt(time.Now().Add(10*time.Minute).Unix(), 10)
+		r.Header.Set("webhook-id", "msg_1")
+		r.Header.Set("webhook-timestamp", ts)
+		r.Header.Set("webhook-signature", signBody("msg_1", ts, body))
+	}); got != 401 {
+		t.Fatalf("future timestamp: status %d, want 401", got)
+	}
+
+	// Non-numeric timestamp.
+	if got := runAuth(t, a, body, func(r *http.Request) {
+		r.Header.Set("webhook-id", "msg_1")
+		r.Header.Set("webhook-timestamp", "not-a-number")
+		r.Header.Set("webhook-signature", signBody("msg_1", "not-a-number", body))
+	}); got != 401 {
+		t.Fatalf("non-numeric timestamp: status %d, want 401", got)
+	}
+
+	// Whitespace-only signature header.
+	if got := runAuth(t, a, body, func(r *http.Request) {
+		ts := now()
+		r.Header.Set("webhook-id", "msg_1")
+		r.Header.Set("webhook-timestamp", ts)
+		r.Header.Set("webhook-signature", "   ")
+	}); got != 401 {
+		t.Fatalf("whitespace signature: status %d, want 401", got)
 	}
 }
 

@@ -36,6 +36,9 @@ func NewSecretAuth(secret string) Authenticator {
 func (a secretAuth) Name() string { return "secret" }
 
 func (a secretAuth) Authenticate(c fiber.Ctx) bool {
+	if len(a.secret) == 0 {
+		return false
+	}
 	token := []byte(c.Get("X-Gitlab-Token"))
 	return subtle.ConstantTimeCompare(token, a.secret) == 1
 }
