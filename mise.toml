@@ -71,6 +71,10 @@ run = "kubectl --context kind-kind-cluster -n gitlab exec deploy/gitlab -- cat /
 description = "Mirror a sample project into the dev GitLab instance (idempotent)"
 run = ".dev/scripts/seed-example-project.sh"
 
+[tasks."dev:gitlab:seed-load-test"]
+description = "Create a load-test project + MR whose pipeline stresses CPU (throttling), memory and network for cigar to report on"
+run = ".dev/scripts/seed-load-test-mr.sh"
+
 [tasks."dev:gitlab:register-runner"]
 description = "Register a Kubernetes-executor instance runner and deploy gitlab-runner (idempotent)"
 run = ".dev/scripts/register-runner.sh"
