@@ -51,6 +51,8 @@ func newReporter(cfg *config.Config, log *zap.Logger) (*reporter.Reporter, error
 		if err != nil {
 			return nil, err
 		}
+	default:
+		return nil, fmt.Errorf("unknown pod resolver %q", cfg.PodResolver)
 	}
 	source, err := metrics.NewPromSource(cfg.PrometheusURL, cfg.ScrapeInterval, log)
 	if err != nil {

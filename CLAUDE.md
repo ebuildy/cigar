@@ -63,11 +63,12 @@ create it in `docs/` and link it from `README.md` if it's user-facing.
 
 ### Pod ↔ job correlation
 
-GitLab Kubernetes executor pods carry labels/annotations like `job_id`, `project_id` (runner ≥ some versions; verify against our runner config). Correlate via cadvisor/kube-state-metrics labels:
+The pod-correlation strategy is selected by `POD_RESOLVER` (default `trace`):
 
-- Preferred: `kube_pod_labels{label_job_id="<id>"}` join to find pod name, then filter cadvisor series by `pod`.
-- Fallback: pod name pattern `runner-<token>-project-<id>-concurrent-<n>` within the job's `started_at`–`finished_at` window.
-- Always exclude the `POD`/pause container (`container!="", container!="POD"`).
+- `trace` (default): fetch the job's GitLab trace and parse the runner's `Running on <pod> via <manager>` line (first match wins, ANSI-tolerant). For the Kubernetes executor `<pod>` is the build pod's hostname, matching the cadvisor `pod` label. No pod-label scraping required. See `internal/correlate/trace.go`.
+- `prometheus`: join `kube_pod_labels{label_job_id="<id>"}` to find the pod name, then filter cadvisor series by `pod`. Requires the runner to inject a `job_id` pod label that kube-state-metrics exposes. See `internal/correlate/prom.go`.
+
+Either way, always exclude the `POD`/pause container (`container!="", container!="POD"`), and pod name follows the pattern `runner-<token>-project-<id>-concurrent-<n>`.
 
 ### PromQL queries (per job, over `[started_at, finished_at]`)
 

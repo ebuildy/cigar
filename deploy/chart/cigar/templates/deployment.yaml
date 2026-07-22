@@ -77,6 +77,8 @@ spec:
               value: {{ .Values.config.gitlabUrl | quote }}
             - name: PROMETHEUS_URL
               value: {{ .Values.config.prometheusUrl | quote }}
+            - name: POD_RESOLVER
+              value: {{ .Values.config.podResolver | quote }}
             - name: THROTTLE_WARN_RATIO
               value: {{ .Values.config.throttleWarnRatio | quote }}
             - name: SCRAPE_INTERVAL

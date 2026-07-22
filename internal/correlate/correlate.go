@@ -1,9 +1,11 @@
 // Package correlate maps a GitLab job to the Kubernetes runner pod that
 // executed it.
 //
-// Preferred strategy: kube_pod_labels{label_job_id="<id>"} join, then filter
-// cadvisor series by pod. Fallback: pod name pattern
-// runner-<token>-project-<id>-concurrent-<n> within the job's time window.
+// Two interchangeable strategies implement Resolver, selected by POD_RESOLVER:
+//   - trace (default): parse the job's GitLab trace for the runner's
+//     "Running on <pod> via <manager>" line (see trace.go).
+//   - prometheus: kube_pod_labels{label_job_id="<id>"} join, then filter
+//     cadvisor series by pod (see prom.go).
 package correlate
 
 import (
