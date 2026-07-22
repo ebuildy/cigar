@@ -31,4 +31,7 @@ type Client interface {
 	// UpsertNote creates the MR note, or updates the existing note that
 	// contains marker (idempotent — one note per MR, never spam).
 	UpsertNote(ctx context.Context, projectID, mrIID int64, marker, body string) error
+
+	// JobTrace returns the raw trace log of a job.
+	JobTrace(ctx context.Context, projectID, jobID int64) (string, error)
 }
