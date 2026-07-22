@@ -38,6 +38,12 @@ func TestTraceResolverPodForJob(t *testing.T) {
 			wantOK:  true,
 		},
 		{
+			name:    "non-SGR escape adjacent to line",
+			trace:   "\x1b[0KRunning on runner-x-project-2-concurrent-0 via mgr...\x1b[0K\n",
+			wantPod: "runner-x-project-2-concurrent-0",
+			wantOK:  true,
+		},
+		{
 			name:    "line not first, first match wins",
 			trace:   "Preparing environment\nRunning on runner-a-project-1-concurrent-0 via m1...\nRunning on runner-b-project-1-concurrent-1 via m2...\n",
 			wantPod: "runner-a-project-1-concurrent-0",

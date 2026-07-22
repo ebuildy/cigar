@@ -17,8 +17,8 @@ type traceFetcher interface {
 	JobTrace(ctx context.Context, projectID, jobID int64) (string, error)
 }
 
-// ansiRE strips SGR color escape codes GitLab wraps trace lines in.
-var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*m")
+// ansiRE strips ANSI CSI escape sequences (color codes, erase-line, etc.) GitLab wraps trace lines in.
+var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*[a-zA-Z]")
 
 // runnerLineRE captures the pod hostname from the runner's "Running on <pod>
 // via <manager>" trace line (Kubernetes executor: <pod> is the build pod).

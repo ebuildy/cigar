@@ -37,6 +37,10 @@ func (f *fakeGitLab) UpsertNote(_ context.Context, _, mrIID int64, _, _ string) 
 	return nil
 }
 
+func (f *fakeGitLab) JobTrace(_ context.Context, _, _ int64) (string, error) {
+	return "", nil
+}
+
 type fakeResolver struct {
 	pods map[int64]string // job ID -> pod name
 	err  error
