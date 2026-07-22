@@ -26,8 +26,10 @@ config:
   authMethods: ""
 
 secrets:
-  # Name of an existing Secret holding the keys WEBHOOK_SECRET and
-  # GITLAB_TOKEN. Recommended (sealed-secrets, external-secrets, ...).
+  # Name of an existing Secret holding GITLAB_TOKEN plus whichever auth keys
+  # the enabled AUTH_METHODS need (WEBHOOK_SECRET for secret,
+  # WEBHOOK_SIGNING_TOKEN for signature). Recommended (sealed-secrets,
+  # external-secrets, ...).
   existingSecret: ""
   # Alternatively set the values here and the chart creates the Secret
   # itself. Avoid committing real values to git.
