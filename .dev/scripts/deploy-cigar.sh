@@ -53,10 +53,21 @@ curl -sf -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
   --data-urlencode "allow_local_requests_from_web_hooks_and_services=true" \
   -o /dev/null
 
-WEBHOOK_SECRET=$(openssl rand -hex 32)
+echo "==> Ensuring a stable WEBHOOK_SECRET"
+kubectl --context "$KUBE_CONTEXT" create namespace cigar --dry-run=client -o yaml | kubectl --context "$KUBE_CONTEXT" apply -f - >/dev/null
+# Reuse the existing WEBHOOK_SECRET so it stays in sync with the token already
+# stored on every project's webhook. Minting a fresh secret each run (while
+# leaving already-registered hooks untouched) is what caused 401s on redeploy.
+WEBHOOK_SECRET=$(kubectl --context "$KUBE_CONTEXT" -n cigar get secret cigar-secrets \
+  -o jsonpath='{.data.WEBHOOK_SECRET}' 2>/dev/null | base64 -d || true)
+if [[ -z "$WEBHOOK_SECRET" ]]; then
+  WEBHOOK_SECRET=$(openssl rand -hex 32)
+  echo "    minted a new WEBHOOK_SECRET"
+else
+  echo "    reusing existing WEBHOOK_SECRET"
+fi
 
 echo "==> Writing cigar-secrets"
-kubectl --context "$KUBE_CONTEXT" create namespace cigar --dry-run=client -o yaml | kubectl --context "$KUBE_CONTEXT" apply -f - >/dev/null
 kubectl --context "$KUBE_CONTEXT" -n cigar create secret generic cigar-secrets \
   --from-literal=WEBHOOK_SECRET="$WEBHOOK_SECRET" \
   --from-literal=GITLAB_TOKEN="$GITLAB_TOKEN" \
@@ -65,11 +76,19 @@ kubectl --context "$KUBE_CONTEXT" -n cigar create secret generic cigar-secrets \
 echo "==> Deploying cigar via helmfile"
 helmfile -f "$HELMFILE" apply -l name=cigar
 
+# helmfile won't roll the pod when the image tag is unchanged (cigar:dev) and
+# only the externally-managed Secret changed, so a same-tag rebuild or a
+# rotated GITLAB_TOKEN/WEBHOOK_SECRET would otherwise keep running on the old
+# pod. Force a restart so the freshly-built image and current secrets take hold.
+echo "==> Restarting cigar to pick up the new image and secrets"
+kubectl --context "$KUBE_CONTEXT" -n cigar rollout restart deploy/cigar
+kubectl --context "$KUBE_CONTEXT" -n cigar rollout status deploy/cigar --timeout=180s
+
 echo "==> Registering the webhook on all projects"
 WEBHOOK_URL="http://cigar.cigar.svc.cluster.local:8080/webhook"
 page=1
 registered=0
-skipped=0
+updated=0
 while :; do
   projects=$(curl -sf -H "PRIVATE-TOKEN: $GITLAB_TOKEN" "$API/projects?per_page=100&page=$page&simple=true")
   entries=$(printf '%s' "$projects" | python3 -c "
@@ -81,9 +100,25 @@ for p in json.load(sys.stdin):
 
   while IFS=$'\t' read -r id path; do
     existing_hooks=$(curl -sf -H "PRIVATE-TOKEN: $GITLAB_TOKEN" "$API/projects/$id/hooks")
-    if printf '%s' "$existing_hooks" | grep -qF "\"url\":\"$WEBHOOK_URL\""; then
-      echo "    [$path] already registered"
-      skipped=$((skipped + 1))
+    hook_id=$(printf '%s' "$existing_hooks" | python3 -c "
+import json,sys
+url='$WEBHOOK_URL'
+for h in json.load(sys.stdin):
+    if h.get('url') == url:
+        print(h['id']); break
+")
+    if [[ -n "$hook_id" ]]; then
+      # Refresh the token (and settings) on the existing hook so it always
+      # matches the current WEBHOOK_SECRET — otherwise a rotated secret 401s.
+      curl -sf -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
+        -X PUT "$API/projects/$id/hooks/$hook_id" \
+        --data-urlencode "url=$WEBHOOK_URL" \
+        --data-urlencode "token=$WEBHOOK_SECRET" \
+        --data-urlencode "pipeline_events=true" \
+        --data-urlencode "enable_ssl_verification=false" \
+        -o /dev/null
+      echo "    [$path] token refreshed"
+      updated=$((updated + 1))
       continue
     fi
     curl -sf -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
@@ -100,5 +135,5 @@ for p in json.load(sys.stdin):
   page=$((page + 1))
 done
 
-echo "==> Done. Registered on $registered project(s), $skipped already had it."
+echo "==> Done. Registered on $registered project(s), refreshed $updated existing hook(s)."
 echo "    Watch it: kubectl --context $KUBE_CONTEXT -n cigar logs -f deploy/cigar"
