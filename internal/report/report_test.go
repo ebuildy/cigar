@@ -289,3 +289,24 @@ func jobLine(t *testing.T, out, key string) string {
 	t.Fatalf("no row for %q in:\n%s", key, out)
 	return ""
 }
+
+func TestRenderUsesNoteMarkerOverride(t *testing.T) {
+	d := Data{PipelineID: 42, Status: "success", NoteMarker: "<!-- ci-resources-bot p=42 m=3 sig=deadbeef -->"}
+	body, err := Render(d)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !contains(body, d.NoteMarker) {
+		t.Fatalf("body missing the override marker:\n%s", body)
+	}
+}
+
+func TestRenderDefaultsToPlainMarker(t *testing.T) {
+	body, err := Render(Data{PipelineID: 1, Status: "success"})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !contains(body, Marker) {
+		t.Fatalf("body missing plain Marker:\n%s", body)
+	}
+}
