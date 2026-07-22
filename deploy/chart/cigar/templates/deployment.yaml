@@ -55,6 +55,17 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secrets.existingSecret | default (include "cigar.fullname" .) }}
                   key: WEBHOOK_SECRET
+            {{- if .Values.config.authMethods }}
+            - name: AUTH_METHODS
+              value: {{ .Values.config.authMethods | quote }}
+            {{- end }}
+            {{- if or .Values.secrets.signingToken .Values.secrets.existingSecret }}
+            - name: WEBHOOK_SIGNING_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret | default (include "cigar.fullname" .) }}
+                  key: WEBHOOK_SIGNING_TOKEN
+            {{- end }}
             - name: GITLAB_TOKEN
               valueFrom:
                 secretKeyRef:

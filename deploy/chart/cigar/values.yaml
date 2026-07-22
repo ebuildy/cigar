@@ -21,6 +21,9 @@ config:
   scrapeInterval: "30s"
   # debug, info, warn, error.
   logLevel: "info"
+  # AUTH_METHODS: ordered, comma-separated webhook auth methods (secret,signature).
+  # Empty defaults to "secret" (legacy X-Gitlab-Token).
+  authMethods: ""
 
 secrets:
   # Name of an existing Secret holding the keys WEBHOOK_SECRET and
@@ -29,6 +32,9 @@ secrets:
   # Alternatively set the values here and the chart creates the Secret
   # itself. Avoid committing real values to git.
   webhookSecret: ""
+  # WEBHOOK_SIGNING_TOKEN: GitLab signing token (whsec_...). Required only when
+  # config.authMethods includes "signature". Prefer existingSecret in production.
+  signingToken: ""
   gitlabToken: ""
 
 # Extra environment variables for the bot container.

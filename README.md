@@ -70,7 +70,9 @@ Environment variables only (12-factor). The bot fails fast at startup if a requi
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `WEBHOOK_SECRET` | ✅ (`serve` only) | — | Value GitLab sends in `X-Gitlab-Token`; compared in constant time |
+| `AUTH_METHODS` | | `secret` | Ordered, comma-separated webhook auth methods: `secret`, `signature`. First method that authenticates wins |
+| `WEBHOOK_SECRET` | ✅ (`serve` only, if `secret` enabled) | — | Value GitLab sends in `X-Gitlab-Token`; compared in constant time |
+| `WEBHOOK_SIGNING_TOKEN` | ✅ (`serve` only, if `signature` enabled) | — | GitLab signing token (`whsec_...`); verifies the HMAC-SHA256 `webhook-signature` header |
 | `GITLAB_TOKEN` | ✅ | — | Project/group access token, `api` scope, least privilege |
 | `PROMETHEUS_URL` | ✅ | — | Prometheus base URL (cadvisor + kube-state-metrics scraped) |
 | `GITLAB_URL` | | `https://gitlab.com` | GitLab instance base URL |
@@ -79,6 +81,10 @@ Environment variables only (12-factor). The bot fails fast at startup if a requi
 | `LISTEN_ADDR` | | `:8080` | Webhook listen address |
 | `OPS_ADDR` | | `:8081` | Health (`/healthz`, `/readyz`) and metrics (`/metrics`) address |
 | `LOG_LEVEL` | | `info` | `debug`, `info`, `warn`, `error` (JSON logs via `log/slog`) |
+
+### Migrating to signing-token auth
+
+To move off the legacy secret token: set `AUTH_METHODS=secret,signature` with both credentials configured, migrate your GitLab webhooks to the signing token, then switch to `AUTH_METHODS=signature`.
 
 ## Development
 
@@ -112,7 +118,7 @@ Releases are handled by [GoReleaser](https://goreleaser.com): push a `v*` tag an
 
 ## Security
 
-- `X-Gitlab-Token` validated with `subtle.ConstantTimeCompare`; failures get a bare `401`.
+- Webhook auth via `AUTH_METHODS` (default `secret`): `X-Gitlab-Token` validated with `subtle.ConstantTimeCompare`, and/or the GitLab signing token's HMAC-SHA256 `webhook-signature` header (5-minute replay window). Methods are tried in order; none authenticating gets a bare `401`.
 - Only `X-Gitlab-Event: Pipeline Hook` is processed; other events get `200` so GitLab doesn't disable the hook.
 - Request bodies capped at 1 MiB via Fiber's `BodyLimit` (`413` beyond that); server read/write timeouts set.
 - TLS terminates at the ingress; the pod listens plain HTTP on `:8080`, ops on `:8081`.
@@ -125,10 +131,10 @@ Helm chart in `deploy/chart/cigar`: Deployment (2 replicas, PDB), Service, Ingre
 ```sh
 helm install cigar deploy/chart/cigar \
   --set config.prometheusUrl=http://prometheus-operated.monitoring.svc:9090 \
-  --set secrets.existingSecret=cigar   # Secret with keys WEBHOOK_SECRET + GITLAB_TOKEN
+  --set secrets.existingSecret=cigar   # Secret with keys WEBHOOK_SECRET + WEBHOOK_SIGNING_TOKEN + GITLAB_TOKEN
 ```
 
-All bot env vars map to `config.*` values; secrets come from an existing Secret (recommended) or `secrets.webhookSecret`/`secrets.gitlabToken`. The NetworkPolicy defaults allow egress to any host on 443 (gitlab.com has no stable CIDR) and to an in-cluster Prometheus in the `monitoring` namespace — tighten `networkPolicy.*` to your environment.
+All bot env vars map to `config.*` values; secrets come from an existing Secret (recommended) or `secrets.webhookSecret`/`secrets.signingToken`/`secrets.gitlabToken`. Set `config.authMethods` to enable signing-token auth (e.g. `secret,signature` during migration, then `signature`). The NetworkPolicy defaults allow egress to any host on 443 (gitlab.com has no stable CIDR) and to an in-cluster Prometheus in the `monitoring` namespace — tighten `networkPolicy.*` to your environment.
 
 ## Status
 
