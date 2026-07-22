@@ -32,8 +32,13 @@ func (h *Handler) Handle(ctx context.Context, ev NoteEvent) error {
 	if !ok {
 		return nil
 	}
-	if ev.AuthorID == h.BotUserID {
-		return nil // loop guard: never react to our own notes
+	// Loop guard: every note the bot writes (report + command replies) carries
+	// the marker, so we skip anything that contains it. This is identity-free on
+	// purpose — the GitLab token may belong to a real user who also issues
+	// commands, so an author==bot check would wrongly drop that user's replies.
+	if strings.Contains(ev.Body, report.MarkerPrefix) {
+		h.Log.Debug("ignoring bot-authored (marker-tagged) note", zap.Int64("note_id", ev.NoteID))
+		return nil
 	}
 	disc, err := h.GitLab.MergeRequestDiscussion(ctx, ev.ProjectID, ev.MRIID, ev.DiscussionID)
 	if err != nil {
@@ -60,6 +65,9 @@ func (h *Handler) Handle(ctx context.Context, ev NoteEvent) error {
 }
 
 func (h *Handler) reply(ctx context.Context, ev NoteEvent, body string) error {
+	// Tag every reply with the marker so the loop guard recognizes it as the
+	// bot's own note (the marker is an HTML comment — invisible when rendered).
+	body += "\n\n" + report.Marker
 	if err := h.GitLab.CreateDiscussionReply(ctx, ev.ProjectID, ev.MRIID, ev.DiscussionID, body); err != nil {
 		return fmt.Errorf("reply to command note %d: %w", ev.NoteID, err)
 	}

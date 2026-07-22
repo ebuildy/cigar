@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,17 +86,24 @@ func TestHandleHelp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	if len(gl.replies) != 1 || gl.replies[0] != HelpText {
-		t.Fatalf("replies = %v, want one HelpText", gl.replies)
+	if len(gl.replies) != 1 || !strings.Contains(gl.replies[0], HelpText) {
+		t.Fatalf("replies = %v, want one containing HelpText", gl.replies)
+	}
+	// Replies must carry the marker so the loop guard recognizes them as ours.
+	if !strings.Contains(gl.replies[0], report.MarkerPrefix) {
+		t.Fatalf("reply not tagged with the marker: %q", gl.replies[0])
 	}
 }
 
-func TestHandleIgnoresOwnNote(t *testing.T) {
+// TestHandleIgnoresOwnMarkedNote proves the loop guard is marker-based, not
+// author-based: a note carrying the marker is dropped even when its author is
+// not the bot (the token may belong to a real user who also issues commands).
+func TestHandleIgnoresOwnMarkedNote(t *testing.T) {
 	gl := &fakeGitLab{discussion: signedRoot(42, 3)}
 	h := newHandler(gl, &fakeResolver{}, &fakeSeries{})
-	_ = h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 555, Body: "help"})
+	_ = h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "help\n\n" + report.Marker})
 	if len(gl.replies) != 0 {
-		t.Fatalf("replied to the bot's own note; replies=%v", gl.replies)
+		t.Fatalf("replied to a marker-tagged (own) note; replies=%v", gl.replies)
 	}
 }
 

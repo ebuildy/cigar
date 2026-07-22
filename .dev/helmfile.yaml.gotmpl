@@ -222,9 +222,19 @@ releases:
         config:
           gitlabUrl: http://gitlab.kind.local
           prometheusUrl: http://prometheus-server.monitoring.svc:80
+          logLevel: debug
+          podResolver: trace
+          throttleWarnRatio: "0.25"
+          scrapeInterval: 15s
           # Authenticate webhooks with GitLab signing tokens (HMAC-SHA256).
           # deploy-cigar.sh sets a matching signing_token on every project hook.
           authMethods: signature
+        # Enable the interactive report commands (reply to the bot's MR note
+        # with "help" / "details [job|pod] <name>"). deploy-cigar.sh mints a
+        # stable COMMANDS_SIGNING_KEY into cigar-secrets and registers the
+        # project webhooks with note_events so replies are delivered.
+        commands:
+          enabled: true
         secrets:
           existingSecret: cigar-secrets
         # Same reason as gitlab-runner's host_aliases above: gitlab.kind.local

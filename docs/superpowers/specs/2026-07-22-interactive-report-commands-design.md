@@ -41,8 +41,13 @@ Defenses, in order of evaluation (any failure → drop silently, no reply):
    `GET /user`). A note's author cannot be changed by editing, so a spoofed
    marker on someone else's comment fails here. The `<!-- ci-resources-bot -->`
    marker text is a lookup hint, never the security boundary.
-2. **Loop guard.** The command note's author must **not** be the bot itself
-   (prevents reacting to our own report/replies).
+2. **Loop guard (marker-based, identity-free).** The bot skips any note whose
+   body carries the `<!-- ci-resources-bot` marker — every note the bot writes
+   (report *and* command replies) is tagged with it. This is deliberately **not**
+   an `author == bot` check: the GitLab token may belong to a real user who also
+   posts commands, so an identity check would wrongly drop that user's replies
+   (and silently — the original bug). A human pasting the marker into their own
+   comment only self-suppresses; it grants nothing.
 3. **Authoritative context.** Project id and MR IID come from the **webhook
    payload**, never from note content. Every GitLab/Prometheus query is scoped to
    that project — a target can never reach another project's pipelines or pods.

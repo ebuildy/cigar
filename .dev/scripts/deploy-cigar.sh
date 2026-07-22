@@ -82,11 +82,25 @@ else
   echo "    reusing existing WEBHOOK_SIGNING_TOKEN"
 fi
 
+echo "==> Ensuring a stable COMMANDS_SIGNING_KEY (interactive-command marker HMAC)"
+# The bot signs its report-note marker with this key and verifies command
+# replies against it. It must stay stable so replies to reports posted on an
+# earlier deploy keep verifying — same rationale as WEBHOOK_SECRET above.
+COMMANDS_SIGNING_KEY=$(kubectl --context "$KUBE_CONTEXT" -n cigar get secret cigar-secrets \
+  -o jsonpath='{.data.COMMANDS_SIGNING_KEY}' 2>/dev/null | base64 -d || true)
+if [[ -z "$COMMANDS_SIGNING_KEY" ]]; then
+  COMMANDS_SIGNING_KEY=$(openssl rand -hex 32)
+  echo "    minted a new COMMANDS_SIGNING_KEY"
+else
+  echo "    reusing existing COMMANDS_SIGNING_KEY"
+fi
+
 echo "==> Writing cigar-secrets"
 kubectl --context "$KUBE_CONTEXT" -n cigar create secret generic cigar-secrets \
   --from-literal=WEBHOOK_SECRET="$WEBHOOK_SECRET" \
   --from-literal=WEBHOOK_SIGNING_TOKEN="$WEBHOOK_SIGNING_TOKEN" \
   --from-literal=GITLAB_TOKEN="$GITLAB_TOKEN" \
+  --from-literal=COMMANDS_SIGNING_KEY="$COMMANDS_SIGNING_KEY" \
   --dry-run=client -o yaml | kubectl --context "$KUBE_CONTEXT" apply -f - >/dev/null
 
 echo "==> Deploying cigar via helmfile"
@@ -132,6 +146,7 @@ for h in json.load(sys.stdin):
         --data-urlencode "url=$WEBHOOK_URL" \
         --data-urlencode "signing_token=$WEBHOOK_SIGNING_TOKEN" \
         --data-urlencode "pipeline_events=true" \
+        --data-urlencode "note_events=true" \
         --data-urlencode "enable_ssl_verification=false" \
         -o /dev/null
       echo "    [$path] signing token refreshed"
@@ -143,6 +158,7 @@ for h in json.load(sys.stdin):
       --data-urlencode "url=$WEBHOOK_URL" \
       --data-urlencode "signing_token=$WEBHOOK_SIGNING_TOKEN" \
       --data-urlencode "pipeline_events=true" \
+      --data-urlencode "note_events=true" \
       --data-urlencode "enable_ssl_verification=false" \
       -o /dev/null
     echo "    [$path] registered"

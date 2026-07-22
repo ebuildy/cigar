@@ -481,11 +481,14 @@ func TestNoteCommandDetailsJob(t *testing.T) {
 	}
 }
 
+// TestNoteCommandLoopGuard proves the bot ignores its own notes, identified by
+// the marker (not by author) so a shared/human token account still works. The
+// note parses as a command but carries the marker, so it must be dropped.
 func TestNoteCommandLoopGuard(t *testing.T) {
 	app, glMock, _ := harness(t, "trace")
 	payload := fmt.Sprintf(`{
 		"object_kind":"note",
-		"object_attributes":{"id":78,"note":"help","noteable_type":"MergeRequest","discussion_id":"disc1","author_id":555},
+		"object_attributes":{"id":78,"note":"help\n<!-- ci-resources-bot -->","noteable_type":"MergeRequest","discussion_id":"disc1","author_id":9},
 		"project":{"id":%d},"merge_request":{"iid":%d}
 	}`, projectID, mrIID)
 	postNoteWebhook(t, app, payload)
@@ -493,6 +496,6 @@ func TestNoteCommandLoopGuard(t *testing.T) {
 	glMock.mu.Lock()
 	defer glMock.mu.Unlock()
 	if len(glMock.replies) != 0 {
-		t.Fatalf("replied to the bot's own note; replies=%d", len(glMock.replies))
+		t.Fatalf("replied to a marker-tagged (own) note; replies=%d", len(glMock.replies))
 	}
 }
