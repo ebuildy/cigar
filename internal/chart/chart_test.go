@@ -28,10 +28,15 @@ func TestRenderIsSanitizerSafe(t *testing.T) {
 	if !strings.HasPrefix(s, "<svg") {
 		t.Fatalf("output is not an <svg>: %.40q", s)
 	}
-	for _, bad := range []string{"<script", "javascript:", "onload=", "http://", "https://"} {
+	// Guard the real external-reference / script vectors. A namespace URI in
+	// xmlns is not a fetch, so it is allowed (and required for standalone SVG).
+	for _, bad := range []string{"<script", "javascript:", "onload=", "onerror=", "xlink:href", "<image", "<foreignObject", "url("} {
 		if strings.Contains(s, bad) {
 			t.Errorf("SVG contains disallowed token %q", bad)
 		}
+	}
+	if !strings.Contains(s, `xmlns="http://www.w3.org/2000/svg"`) {
+		t.Error("SVG missing xmlns; standalone SVG will not render in GitLab")
 	}
 	if !strings.Contains(s, "<polyline") {
 		t.Error("SVG has no polyline")

@@ -48,7 +48,7 @@ type chartVM struct {
 }
 
 var tmpl = template.Must(template.New("svg").Parse(
-	`<svg viewBox="0 0 {{.Width}} {{.Height}}" width="{{.Width}}" height="{{.Height}}" font-family="sans-serif" font-size="11">` +
+	`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {{.Width}} {{.Height}}" width="{{.Width}}" height="{{.Height}}" font-family="sans-serif" font-size="11">` +
 		`<rect x="0" y="0" width="{{.Width}}" height="{{.Height}}" fill="#ffffff"/>` +
 		`<text x="8" y="14" fill="#111111">{{.Title}}</text>` +
 		`{{range .Lines}}<polyline fill="none" stroke="{{.Color}}" stroke-width="1.5" points="{{.Points}}"/>` +
