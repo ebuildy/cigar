@@ -212,3 +212,68 @@ func TestHandlerAuthOrdering(t *testing.T) {
 		t.Fatalf("secret request against signature-only app: status %d, want 401", resp2.StatusCode)
 	}
 }
+
+// countingAuth records how many times it was consulted; result is fixed.
+type countingAuth struct {
+	result bool
+	calls  *int
+}
+
+func (a countingAuth) Name() string { return "counting" }
+
+func (a countingAuth) Authenticate(fiber.Ctx) bool {
+	*a.calls++
+	return a.result
+}
+
+// TestHandlerAuthFirstMatchWins proves the authenticate loop tries
+// authenticators in order, falls through on failure, and short-circuits on the
+// first success.
+func TestHandlerAuthFirstMatchWins(t *testing.T) {
+	post := func(app *fiber.App) int {
+		req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(validPayload))
+		req.Header.Set("X-Gitlab-Event", "Pipeline Hook")
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatalf("app.Test: %v", err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	// Fall-through: first denies, second accepts -> authenticated, both consulted.
+	var firstCalls, secondCalls int
+	app := NewApp([]Authenticator{
+		countingAuth{result: false, calls: &firstCalls},
+		countingAuth{result: true, calls: &secondCalls},
+	}, &fakeQueue{}, slog.New(slog.DiscardHandler))
+	if got := post(app); got != http.StatusOK {
+		t.Fatalf("fall-through: status %d, want 200", got)
+	}
+	if firstCalls != 1 || secondCalls != 1 {
+		t.Fatalf("fall-through calls: first=%d second=%d, want 1/1", firstCalls, secondCalls)
+	}
+
+	// Short-circuit: first accepts -> second must not be consulted.
+	var a1, a2 int
+	app2 := NewApp([]Authenticator{
+		countingAuth{result: true, calls: &a1},
+		countingAuth{result: false, calls: &a2},
+	}, &fakeQueue{}, slog.New(slog.DiscardHandler))
+	if got := post(app2); got != http.StatusOK {
+		t.Fatalf("short-circuit: status %d, want 200", got)
+	}
+	if a1 != 1 || a2 != 0 {
+		t.Fatalf("short-circuit calls: first=%d second=%d, want 1/0", a1, a2)
+	}
+
+	// All deny -> 401.
+	var d1, d2 int
+	app3 := NewApp([]Authenticator{
+		countingAuth{result: false, calls: &d1},
+		countingAuth{result: false, calls: &d2},
+	}, &fakeQueue{}, slog.New(slog.DiscardHandler))
+	if got := post(app3); got != http.StatusUnauthorized {
+		t.Fatalf("all deny: status %d, want 401", got)
+	}
+}
