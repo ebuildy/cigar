@@ -34,4 +34,19 @@ type Client interface {
 
 	// JobTrace returns the raw trace log of a job.
 	JobTrace(ctx context.Context, projectID, jobID int64) (string, error)
+
+	// CurrentUser returns the authenticated (bot) user id, for the author/loop
+	// guard on command notes.
+	CurrentUser(ctx context.Context) (userID int64, err error)
+
+	// MergeRequestDiscussion fetches a discussion and returns its root note's
+	// author and body.
+	MergeRequestDiscussion(ctx context.Context, projectID, mrIID int64, discussionID string) (Discussion, error)
+
+	// UploadFile uploads content to the project and returns the markdown that
+	// embeds it in a note.
+	UploadFile(ctx context.Context, projectID int64, filename string, content []byte) (markdown string, err error)
+
+	// CreateDiscussionReply posts body as a reply in the given MR discussion.
+	CreateDiscussionReply(ctx context.Context, projectID, mrIID int64, discussionID, body string) error
 }
