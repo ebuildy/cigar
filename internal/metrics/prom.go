@@ -8,22 +8,25 @@ import (
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
+	"go.uber.org/zap"
 )
 
 // NewPromSource returns the Prometheus-backed Source (cadvisor +
 // kube-state-metrics queries). Windows are padded by one scrapeInterval so
 // short jobs still cover at least one sample.
-func NewPromSource(promURL string, scrapeInterval time.Duration) (Source, error) {
+func NewPromSource(promURL string, scrapeInterval time.Duration, log *zap.Logger) (Source, error) {
 	c, err := api.NewClient(api.Config{Address: promURL})
 	if err != nil {
 		return nil, fmt.Errorf("create prometheus client: %w", err)
 	}
-	return &promSource{api: promv1.NewAPI(c), scrape: scrapeInterval}, nil
+	log.Debug("prometheus metrics source created", zap.String("url", promURL))
+	return &promSource{api: promv1.NewAPI(c), scrape: scrapeInterval, log: log}, nil
 }
 
 type promSource struct {
 	api    promv1.API
 	scrape time.Duration
+	log    *zap.Logger
 }
 
 func (s *promSource) PodUsage(ctx context.Context, pod string, start, end time.Time) (*JobUsage, error) {
@@ -32,6 +35,7 @@ func (s *promSource) PodUsage(ctx context.Context, pod string, start, end time.T
 		return nil, fmt.Errorf("invalid job window %s..%s", start, end)
 	}
 	window := fmt.Sprintf("%dms", (dur + s.scrape).Milliseconds())
+	s.log.Debug("querying pod usage", zap.String("pod", pod), zap.String("window", window))
 	// Container-level series: always exclude the pause container.
 	csel := fmt.Sprintf(`pod=%q,container!="",container!="POD"`, pod)
 	// Pod-level series (network) and kube-state-metrics.
@@ -82,6 +86,12 @@ func (s *promSource) PodUsage(ctx context.Context, pod string, start, end time.T
 	if ok && periods > 0 {
 		u.ThrottledRatio = throttled / periods
 	}
+	s.log.Debug("pod usage computed",
+		zap.String("pod", pod),
+		zap.Uint64("peak_memory_bytes", u.PeakMemoryBytes),
+		zap.Float64("cpu_seconds", u.CPUSeconds),
+		zap.Float64("throttled_ratio", u.ThrottledRatio),
+		zap.Bool("low_confidence", u.LowConfidence))
 	return u, nil
 }
 
@@ -97,6 +107,7 @@ func (s *promSource) scalar(ctx context.Context, query string, ts time.Time) (fl
 		return 0, false, fmt.Errorf("prometheus query %q: unexpected result type %s", query, val.Type())
 	}
 	if len(vec) == 0 {
+		s.log.Debug("prometheus query matched no series", zap.String("query", query))
 		return 0, false, nil
 	}
 	return float64(vec[0].Value), true, nil

@@ -1,7 +1,6 @@
 package webhook
 
 import (
-	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3"
+	"go.uber.org/zap"
 )
 
 const secret = "s3cret"
@@ -107,7 +107,7 @@ func TestHandler(t *testing.T) {
 			}
 
 			queue := &fakeQueue{full: tt.queueFull}
-			app := NewApp([]Authenticator{NewSecretAuth(secret)}, queue, slog.New(slog.DiscardHandler))
+			app := NewApp([]Authenticator{NewSecretAuth(secret)}, queue, zap.NewNop())
 
 			req := httptest.NewRequest(method, "/webhook", strings.NewReader(tt.body))
 			req.Header.Set("X-Gitlab-Token", token)
@@ -140,7 +140,7 @@ func TestHandler(t *testing.T) {
 // which app.Test cannot observe, so this test drives a real listener.
 func TestOversizedBodyRejected(t *testing.T) {
 	queue := &fakeQueue{}
-	app := NewApp([]Authenticator{NewSecretAuth(secret)}, queue, slog.New(slog.DiscardHandler))
+	app := NewApp([]Authenticator{NewSecretAuth(secret)}, queue, zap.NewNop())
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -184,7 +184,7 @@ func TestHandlerAuthOrdering(t *testing.T) {
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
 
 	// signature-only app accepts a signed request but rejects a secret-only one.
-	app := NewApp([]Authenticator{sig}, &fakeQueue{}, slog.New(slog.DiscardHandler))
+	app := NewApp([]Authenticator{sig}, &fakeQueue{}, zap.NewNop())
 
 	signed := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(validPayload))
 	signed.Header.Set("webhook-id", "m1")
@@ -246,7 +246,7 @@ func TestHandlerAuthFirstMatchWins(t *testing.T) {
 	app := NewApp([]Authenticator{
 		countingAuth{result: false, calls: &firstCalls},
 		countingAuth{result: true, calls: &secondCalls},
-	}, &fakeQueue{}, slog.New(slog.DiscardHandler))
+	}, &fakeQueue{}, zap.NewNop())
 	if got := post(app); got != http.StatusOK {
 		t.Fatalf("fall-through: status %d, want 200", got)
 	}
@@ -259,7 +259,7 @@ func TestHandlerAuthFirstMatchWins(t *testing.T) {
 	app2 := NewApp([]Authenticator{
 		countingAuth{result: true, calls: &a1},
 		countingAuth{result: false, calls: &a2},
-	}, &fakeQueue{}, slog.New(slog.DiscardHandler))
+	}, &fakeQueue{}, zap.NewNop())
 	if got := post(app2); got != http.StatusOK {
 		t.Fatalf("short-circuit: status %d, want 200", got)
 	}
@@ -272,7 +272,7 @@ func TestHandlerAuthFirstMatchWins(t *testing.T) {
 	app3 := NewApp([]Authenticator{
 		countingAuth{result: false, calls: &d1},
 		countingAuth{result: false, calls: &d2},
-	}, &fakeQueue{}, slog.New(slog.DiscardHandler))
+	}, &fakeQueue{}, zap.NewNop())
 	if got := post(app3); got != http.StatusUnauthorized {
 		t.Fatalf("all deny: status %d, want 401", got)
 	}

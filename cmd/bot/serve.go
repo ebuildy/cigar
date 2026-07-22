@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/config"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/reporter"
@@ -47,10 +47,13 @@ func serve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	log, err := newLogger(cfg)
-	if err != nil {
-		return err
-	}
+	log := logger
+	log.Debug("configuration loaded",
+		zap.String("gitlab_url", cfg.GitLabURL),
+		zap.String("prometheus_url", cfg.PrometheusURL),
+		zap.Strings("auth_methods", cfg.AuthMethods),
+		zap.Float64("throttle_warn_ratio", cfg.ThrottleWarnRatio),
+		zap.Duration("scrape_interval", cfg.ScrapeInterval))
 	rep, err := newReporter(cfg, log)
 	if err != nil {
 		return err
@@ -58,6 +61,7 @@ func serve(ctx context.Context) error {
 
 	q := make(queue, 128)
 	go worker(ctx, q, rep, log)
+	log.Debug("worker started")
 
 	auths, err := buildAuthenticators(cfg)
 	if err != nil {
@@ -78,11 +82,11 @@ func serve(ctx context.Context) error {
 
 	errCh := make(chan error, 2)
 	go func() {
-		log.Info("webhook server listening", "addr", cfg.ListenAddr)
+		log.Info("webhook server listening", zap.String("addr", cfg.ListenAddr))
 		errCh <- app.Listen(cfg.ListenAddr, listenCfg)
 	}()
 	go func() {
-		log.Info("ops server listening", "addr", cfg.OpsAddr)
+		log.Info("ops server listening", zap.String("addr", cfg.OpsAddr))
 		errCh <- ops.Listen(cfg.OpsAddr, listenCfg)
 	}()
 
@@ -97,10 +101,11 @@ func serve(ctx context.Context) error {
 }
 
 // worker consumes validated pipeline events and posts MR comments.
-func worker(ctx context.Context, q queue, rep *reporter.Reporter, log *slog.Logger) {
+func worker(ctx context.Context, q queue, rep *reporter.Reporter, log *zap.Logger) {
 	for {
 		select {
 		case <-ctx.Done():
+			log.Debug("worker stopping", zap.Error(ctx.Err()))
 			return
 		case ev := <-q:
 			process(ctx, rep, ev, log)
@@ -108,7 +113,7 @@ func worker(ctx context.Context, q queue, rep *reporter.Reporter, log *slog.Logg
 	}
 }
 
-func process(ctx context.Context, rep *reporter.Reporter, ev webhook.PipelineEvent, log *slog.Logger) {
+func process(ctx context.Context, rep *reporter.Reporter, ev webhook.PipelineEvent, log *zap.Logger) {
 	ctx, cancel := context.WithTimeout(ctx, processTimeout)
 	defer cancel()
 
@@ -119,11 +124,17 @@ func process(ctx context.Context, rep *reporter.Reporter, ev webhook.PipelineEve
 		mrIID = ev.MergeRequest.IID
 	}
 	ref := ev.ObjectAttributes.Ref
-	log = log.With("pipeline_id", ev.ObjectAttributes.ID, "project_id", ev.Project.ID, "mr_iid", mrIID, "ref", ref)
+	log = log.With(
+		zap.Int64("pipeline_id", ev.ObjectAttributes.ID),
+		zap.Int64("project_id", ev.Project.ID),
+		zap.Int64("mr_iid", mrIID),
+		zap.String("ref", ref),
+	)
+	log.Debug("processing pipeline event", zap.String("status", ev.ObjectAttributes.Status))
 
 	posted, err := rep.ProcessPipeline(ctx, ev.Project.ID, ev.ObjectAttributes.ID, mrIID, ref, ev.ObjectAttributes.Status)
 	if err != nil {
-		log.Error("process pipeline failed", "err", err)
+		log.Error("process pipeline failed", zap.Error(err))
 		return
 	}
 	if !posted {

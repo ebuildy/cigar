@@ -2,8 +2,9 @@ package main
 
 import (
 	"fmt"
-	"log/slog"
-	"os"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/config"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/correlate"
@@ -12,30 +13,40 @@ import (
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/reporter"
 )
 
-// newLogger builds the JSON logger on stderr (stdout stays clean for report
-// output) and installs it as the slog default.
-func newLogger(cfg *config.Config) (*slog.Logger, error) {
-	var level slog.Level
-	if err := level.UnmarshalText([]byte(cfg.LogLevel)); err != nil {
-		return nil, fmt.Errorf("invalid LOG_LEVEL: %w", err)
+// newLogger builds the zap JSON logger writing to stdout at the given level
+// (debug, info, warn, error). It also installs itself as the zap global so
+// any code reaching for zap.L()/zap.S() shares this configuration.
+func newLogger(level string) (*zap.Logger, error) {
+	var lvl zapcore.Level
+	if err := lvl.UnmarshalText([]byte(level)); err != nil {
+		return nil, fmt.Errorf("invalid log level %q (want debug, info, warn or error): %w", level, err)
 	}
-	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
-	slog.SetDefault(log)
+	cfg := zap.NewProductionConfig()
+	cfg.Level = zap.NewAtomicLevelAt(lvl)
+	cfg.Encoding = "json"
+	cfg.OutputPaths = []string{"stdout"}
+	cfg.ErrorOutputPaths = []string{"stdout"}
+	cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	log, err := cfg.Build()
+	if err != nil {
+		return nil, fmt.Errorf("build logger: %w", err)
+	}
+	zap.ReplaceGlobals(log)
 	return log, nil
 }
 
 // newReporter wires the concrete GitLab and Prometheus clients into the
 // reporter shared by `serve` and `run`.
-func newReporter(cfg *config.Config, log *slog.Logger) (*reporter.Reporter, error) {
-	gl, err := gitlab.New(cfg.GitLabURL, cfg.GitLabToken)
+func newReporter(cfg *config.Config, log *zap.Logger) (*reporter.Reporter, error) {
+	gl, err := gitlab.New(cfg.GitLabURL, cfg.GitLabToken, log)
 	if err != nil {
 		return nil, err
 	}
-	resolver, err := correlate.NewPromResolver(cfg.PrometheusURL, cfg.ScrapeInterval)
+	resolver, err := correlate.NewPromResolver(cfg.PrometheusURL, cfg.ScrapeInterval, log)
 	if err != nil {
 		return nil, err
 	}
-	source, err := metrics.NewPromSource(cfg.PrometheusURL, cfg.ScrapeInterval)
+	source, err := metrics.NewPromSource(cfg.PrometheusURL, cfg.ScrapeInterval, log)
 	if err != nil {
 		return nil, err
 	}

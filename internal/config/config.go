@@ -21,7 +21,6 @@ type Config struct {
 	ScrapeInterval      time.Duration
 	ListenAddr          string
 	OpsAddr             string
-	LogLevel            string
 }
 
 func Load() (*Config, error) {
@@ -35,8 +34,8 @@ func Load() (*Config, error) {
 		ScrapeInterval:      30 * time.Second,
 		ListenAddr:          getenv("LISTEN_ADDR", ":8080"),
 		OpsAddr:             getenv("OPS_ADDR", ":8081"),
-		LogLevel:            getenv("LOG_LEVEL", "info"),
 	}
+	// LOG_LEVEL is consumed by the --log-level root flag (cmd/bot), not here.
 
 	if v := os.Getenv("THROTTLE_WARN_RATIO"); v != "" {
 		r, err := strconv.ParseFloat(v, 64)

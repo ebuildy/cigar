@@ -34,7 +34,7 @@ internal/
   e2e/                   # end-to-end test: real components against mock GitLab + Prometheus HTTP servers
 ```
 
-- CLI via `spf13/cobra`: `bot serve` runs the service (container CMD); `bot run --project <id> <pipeline-id>` builds the same report once and prints it to stdout (logs on stderr). New entry points are subcommands, not flags on root.
+- CLI via `spf13/cobra`: `bot serve` runs the service (container CMD); `bot run --project <id> <pipeline-id>` builds the same report once and prints it to stdout (JSON logs also go to stdout; `--log-level error` keeps the output to just the report). New entry points are subcommands, not flags on root.
 - Both paths go through `reporter.Reporter.Build` → `report.Render` — never fork the report logic per entry point. Per-job failures (no pod, metrics error) leave that job's `Usage` nil; only the GitLab jobs listing failing aborts a report.
 - HTTP via `gofiber/fiber/v3`: `webhook.NewApp` builds the webhook Fiber app (routes, body limit); a second Fiber app serves ops endpoints on `:8081`.
 - Keep packages under `internal/`; no public API surface.
@@ -87,12 +87,13 @@ GitLab Kubernetes executor pods carry labels/annotations like `job_id`, `project
 
 ### Config (env only, 12-factor)
 
-`AUTH_METHODS` (default `secret`), `WEBHOOK_SECRET`, `WEBHOOK_SIGNING_TOKEN`, `GITLAB_URL`, `GITLAB_TOKEN`, `PROMETHEUS_URL`, `THROTTLE_WARN_RATIO` (default `0.25`), `SCRAPE_INTERVAL` (default `30s`), `LISTEN_ADDR`, `LOG_LEVEL`. Fail fast at startup on missing required vars. `WEBHOOK_SECRET` is required only when `secret` is an enabled auth method; `WEBHOOK_SIGNING_TOKEN` is required only when `signature` is an enabled auth method. Both are required by `serve` only — `bot run` works without either.
+`AUTH_METHODS` (default `secret`), `WEBHOOK_SECRET`, `WEBHOOK_SIGNING_TOKEN`, `GITLAB_URL`, `GITLAB_TOKEN`, `PROMETHEUS_URL`, `THROTTLE_WARN_RATIO` (default `0.25`), `SCRAPE_INTERVAL` (default `30s`), `LISTEN_ADDR`, `LOG_LEVEL` (default `info`; also settable via the `--log-level` root flag, which takes precedence). Fail fast at startup on missing required vars. `WEBHOOK_SECRET` is required only when `secret` is an enabled auth method; `WEBHOOK_SIGNING_TOKEN` is required only when `signature` is an enabled auth method. Both are required by `serve` only — `bot run` works without either.
 
 ## Go conventions
 
 - Go ≥ 1.26, modules; `go.mod` module path `gitlab.com/<group>/gitlab-ci-resources-bot`.
-- Standard library first; approved deps: `gofiber/fiber/v3` (HTTP server), `spf13/cobra` (CLI), `client-go` (GitLab), `prometheus/client_golang` (API + own metrics), `log/slog` for logging (JSON in prod).
+- Standard library first; approved deps: `gofiber/fiber/v3` (HTTP server), `spf13/cobra` (CLI), `client-go` (GitLab), `prometheus/client_golang` (API + own metrics), `go.uber.org/zap` for logging (structured JSON to stdout).
+- Logging: `go.uber.org/zap`, JSON encoding, written to **stdout**. The level is a persistent root flag `--log-level` (`debug`/`info`/`warn`/`error`), defaulting to `$LOG_LEVEL` then `info`; the root command builds the logger in `PersistentPreRunE` (`cmd/bot/deps.go:newLogger`) and installs it via `zap.ReplaceGlobals`. Pass `*zap.Logger` down through constructors; use typed fields (`zap.String`, `zap.Int64`, `zap.Error`), never loose key/value pairs. Tests use `zap.NewNop()`.
 - Errors: wrap with `fmt.Errorf("...: %w", err)`; no `panic` outside `main`.
 - Context everywhere: every outbound call takes `context.Context` with timeout.
 - Report rendering via `text/template` with golden-file tests (`testdata/*.md`).

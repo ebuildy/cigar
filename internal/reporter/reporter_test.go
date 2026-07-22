@@ -3,9 +3,10 @@ package reporter
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"testing"
 	"time"
+
+	"go.uber.org/zap"
 
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/gitlab"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/metrics"
@@ -97,7 +98,7 @@ func TestProcessPipeline(t *testing.T) {
 				GitLab:   gl,
 				Resolver: &fakeResolver{},
 				Metrics:  &fakeSource{},
-				Log:      slog.New(slog.DiscardHandler),
+				Log:      zap.NewNop(),
 			}
 			posted, err := r.ProcessPipeline(context.Background(), 7, 42, tt.mrIID, tt.ref, "success")
 			if err != nil {
@@ -126,7 +127,7 @@ func TestBuildMapsStageAndName(t *testing.T) {
 		GitLab:   gl,
 		Resolver: &fakeResolver{},
 		Metrics:  &fakeSource{},
-		Log:      slog.New(slog.DiscardHandler),
+		Log:      zap.NewNop(),
 	}
 	data, err := r.Build(context.Background(), 7, 42)
 	if err != nil {
@@ -202,7 +203,7 @@ func TestBuild(t *testing.T) {
 				Resolver:          tt.resolver,
 				Metrics:           tt.source,
 				ThrottleWarnRatio: 0.25,
-				Log:               slog.New(slog.DiscardHandler),
+				Log:               zap.NewNop(),
 			}
 			data, err := r.Build(context.Background(), 7, 42)
 			if tt.wantErr {

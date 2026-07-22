@@ -28,7 +28,7 @@ startup on missing/invalid required values.
 | `SCRAPE_INTERVAL` | no | `30s` | Prometheus scrape interval; query windows are padded by one interval |
 | `LISTEN_ADDR` | no | `:8080` | Webhook HTTP listener |
 | `OPS_ADDR` | no | `:8081` | Ops listener: `/healthz`, `/readyz`, `/metrics` |
-| `LOG_LEVEL` | no | `info` | `debug` \| `info` \| `warn` \| `error` |
+| `LOG_LEVEL` | no | `info` | `debug` \| `info` \| `warn` \| `error` — structured JSON logs (zap) written to stdout; also settable per-invocation with the `--log-level` root flag, which takes precedence |
 
 **Webhook authentication.** `AUTH_METHODS` lists the enabled methods in priority
 order; the first one that authenticates a request wins, otherwise the request is

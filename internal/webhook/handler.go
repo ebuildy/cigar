@@ -7,10 +7,10 @@ package webhook
 
 import (
 	"encoding/json"
-	"log/slog"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
+	"go.uber.org/zap"
 )
 
 const maxBodyBytes = 1 << 20 // 1 MiB, enforced by Fiber's BodyLimit (413 beyond)
@@ -43,7 +43,7 @@ type Enqueuer interface {
 // NewApp builds the webhook Fiber app: POST /webhook authenticated by the
 // given authenticators (tried in order, first success wins), with event
 // filtering and a 1 MiB body limit.
-func NewApp(auths []Authenticator, queue Enqueuer, log *slog.Logger) *fiber.App {
+func NewApp(auths []Authenticator, queue Enqueuer, log *zap.Logger) *fiber.App {
 	app := fiber.New(fiber.Config{
 		BodyLimit:    maxBodyBytes,
 		ReadTimeout:  10 * time.Second,
@@ -57,7 +57,7 @@ func NewApp(auths []Authenticator, queue Enqueuer, log *slog.Logger) *fiber.App 
 type handler struct {
 	auths []Authenticator
 	queue Enqueuer
-	log   *slog.Logger
+	log   *zap.Logger
 }
 
 func (h *handler) authenticate(c fiber.Ctx) bool {
@@ -71,29 +71,39 @@ func (h *handler) authenticate(c fiber.Ctx) bool {
 
 func (h *handler) handle(c fiber.Ctx) error {
 	if !h.authenticate(c) {
+		h.log.Debug("webhook authentication failed", zap.String("event", c.Get("X-Gitlab-Event")))
 		return c.SendStatus(fiber.StatusUnauthorized) // deliberately no body detail
 	}
 
 	// Ignore other event types with 200 so GitLab doesn't disable the hook.
-	if c.Get("X-Gitlab-Event") != "Pipeline Hook" {
+	if evType := c.Get("X-Gitlab-Event"); evType != "Pipeline Hook" {
+		h.log.Debug("ignoring non-pipeline event", zap.String("event", evType))
 		return c.SendStatus(fiber.StatusOK)
 	}
 
 	var ev PipelineEvent
 	if err := json.Unmarshal(c.Body(), &ev); err != nil {
+		h.log.Warn("malformed pipeline payload", zap.Error(err))
 		return c.SendStatus(fiber.StatusBadRequest)
 	}
 
 	// merge_request may be nil when the branch was pushed before the MR was
 	// created; the worker resolves the MR from object_attributes.ref.
 	if !terminalStatuses[ev.ObjectAttributes.Status] {
+		h.log.Debug("ignoring non-terminal pipeline status",
+			zap.Int64("pipeline_id", ev.ObjectAttributes.ID),
+			zap.String("status", ev.ObjectAttributes.Status))
 		return c.SendStatus(fiber.StatusOK)
 	}
 
 	if !h.queue.Enqueue(ev) {
 		h.log.Warn("queue full, dropping event",
-			"pipeline_id", ev.ObjectAttributes.ID, "project_id", ev.Project.ID)
+			zap.Int64("pipeline_id", ev.ObjectAttributes.ID), zap.Int64("project_id", ev.Project.ID))
 		return c.SendStatus(fiber.StatusServiceUnavailable)
 	}
+	h.log.Debug("enqueued pipeline event",
+		zap.Int64("pipeline_id", ev.ObjectAttributes.ID),
+		zap.Int64("project_id", ev.Project.ID),
+		zap.String("status", ev.ObjectAttributes.Status))
 	return c.SendStatus(fiber.StatusOK)
 }

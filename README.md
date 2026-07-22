@@ -59,7 +59,8 @@ The binary is a [Cobra](https://github.com/spf13/cobra) CLI, and HTTP is served 
 ```sh
 bot serve                          # run the webhook service
 bot run --project 7 12345         # build the report for pipeline 12345 of project 7
-                                   # and print it to stdout (logs go to stderr)
+                                   # and print it to stdout (add --log-level error
+                                   # to keep the output to just the report)
 ```
 
 `bot run` goes through the exact same report pipeline as the webhook path — only the destination differs (stdout instead of an MR comment). Handy for testing the report against a real pipeline without firing a webhook; it does not need `WEBHOOK_SECRET`.
@@ -80,7 +81,7 @@ Environment variables only (12-factor). The bot fails fast at startup if a requi
 | `SCRAPE_INTERVAL` | | `30s` | Prometheus scrape interval; query windows are padded by one interval |
 | `LISTEN_ADDR` | | `:8080` | Webhook listen address |
 | `OPS_ADDR` | | `:8081` | Health (`/healthz`, `/readyz`) and metrics (`/metrics`) address |
-| `LOG_LEVEL` | | `info` | `debug`, `info`, `warn`, `error` (JSON logs via `log/slog`) |
+| `LOG_LEVEL` | | `info` | `debug`, `info`, `warn`, `error` — JSON logs to stdout via [zap](https://github.com/uber-go/zap); also settable per-invocation with the `--log-level` flag |
 
 ### Migrating to signing-token auth
 

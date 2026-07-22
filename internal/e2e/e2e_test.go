@@ -9,7 +9,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -19,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3"
+	"go.uber.org/zap"
 
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/correlate"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/gitlab"
@@ -171,16 +171,16 @@ func harness(t *testing.T) (*fiber.App, *mockGitLab, *mockProm) {
 	glSrv := glMock.server(t)
 	promSrv := promMock.server(t)
 
-	log := slog.New(slog.DiscardHandler)
-	glClient, err := gitlab.New(glSrv.URL, "test-token")
+	log := zap.NewNop()
+	glClient, err := gitlab.New(glSrv.URL, "test-token", log)
 	if err != nil {
 		t.Fatalf("gitlab client: %v", err)
 	}
-	resolver, err := correlate.NewPromResolver(promSrv.URL, 30*time.Second)
+	resolver, err := correlate.NewPromResolver(promSrv.URL, 30*time.Second, log)
 	if err != nil {
 		t.Fatalf("resolver: %v", err)
 	}
-	source, err := metrics.NewPromSource(promSrv.URL, 30*time.Second)
+	source, err := metrics.NewPromSource(promSrv.URL, 30*time.Second, log)
 	if err != nil {
 		t.Fatalf("source: %v", err)
 	}

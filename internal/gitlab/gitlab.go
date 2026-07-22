@@ -5,20 +5,23 @@ import (
 	"fmt"
 	"strings"
 
+	"go.uber.org/zap"
 	gl "gitlab.com/gitlab-org/api/client-go"
 )
 
 type apiClient struct {
-	c *gl.Client
+	c   *gl.Client
+	log *zap.Logger
 }
 
 // New returns a Client backed by the GitLab REST API.
-func New(baseURL, token string) (Client, error) {
+func New(baseURL, token string, log *zap.Logger) (Client, error) {
 	c, err := gl.NewClient(token, gl.WithBaseURL(baseURL))
 	if err != nil {
 		return nil, fmt.Errorf("create gitlab client: %w", err)
 	}
-	return &apiClient{c: c}, nil
+	log.Debug("gitlab client created", zap.String("base_url", baseURL))
+	return &apiClient{c: c, log: log}, nil
 }
 
 func (a *apiClient) PipelineJobs(ctx context.Context, projectID, pipelineID int64) ([]Job, error) {
@@ -44,6 +47,8 @@ func (a *apiClient) PipelineJobs(ctx context.Context, projectID, pipelineID int6
 		}
 		opts.Page = resp.NextPage
 	}
+	a.log.Debug("fetched pipeline jobs",
+		zap.Int64("project_id", projectID), zap.Int64("pipeline_id", pipelineID), zap.Int("jobs", len(jobs)))
 	return jobs, nil
 }
 
@@ -58,6 +63,7 @@ func (a *apiClient) MergeRequestForBranch(ctx context.Context, projectID int64, 
 		return 0, false, fmt.Errorf("list open MRs for branch %q: %w", branch, err)
 	}
 	if len(mrs) == 0 {
+		a.log.Debug("no open MR for branch", zap.Int64("project_id", projectID), zap.String("branch", branch))
 		return 0, false, nil
 	}
 	return mrs[0].IID, true, nil
@@ -76,6 +82,8 @@ func (a *apiClient) UpsertNote(ctx context.Context, projectID, mrIID int64, mark
 					&gl.UpdateMergeRequestNoteOptions{Body: gl.Ptr(body)}, gl.WithContext(ctx)); err != nil {
 					return fmt.Errorf("update note %d on MR !%d: %w", n.ID, mrIID, err)
 				}
+				a.log.Debug("updated existing MR note",
+					zap.Int64("project_id", projectID), zap.Int64("mr_iid", mrIID), zap.Int64("note_id", n.ID))
 				return nil
 			}
 		}
@@ -88,5 +96,6 @@ func (a *apiClient) UpsertNote(ctx context.Context, projectID, mrIID int64, mark
 		&gl.CreateMergeRequestNoteOptions{Body: gl.Ptr(body)}, gl.WithContext(ctx)); err != nil {
 		return fmt.Errorf("create note on MR !%d: %w", mrIID, err)
 	}
+	a.log.Debug("created new MR note", zap.Int64("project_id", projectID), zap.Int64("mr_iid", mrIID))
 	return nil
 }

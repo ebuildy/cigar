@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"go.uber.org/zap"
 )
 
 func TestMergeRequestForBranch(t *testing.T) {
@@ -46,7 +48,7 @@ func TestMergeRequestForBranch(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			c, err := New(srv.URL, "test-token")
+			c, err := New(srv.URL, "test-token", zap.NewNop())
 			if err != nil {
 				t.Fatalf("New: %v", err)
 			}

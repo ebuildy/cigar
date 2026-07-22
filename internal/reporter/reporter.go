@@ -7,7 +7,8 @@ package reporter
 import (
 	"context"
 	"fmt"
-	"log/slog"
+
+	"go.uber.org/zap"
 
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/correlate"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/gitlab"
@@ -20,7 +21,7 @@ type Reporter struct {
 	Resolver          correlate.Resolver
 	Metrics           metrics.Source
 	ThrottleWarnRatio float64
-	Log               *slog.Logger
+	Log               *zap.Logger
 }
 
 // ProcessPipeline builds the report for one pipeline and upserts it as a
@@ -39,9 +40,11 @@ func (r *Reporter) ProcessPipeline(ctx context.Context, projectID, pipelineID, m
 		}
 		if !ok {
 			r.Log.Info("no open merge request for branch yet, skipping",
-				"project_id", projectID, "branch", ref, "pipeline_id", pipelineID)
+				zap.Int64("project_id", projectID), zap.String("branch", ref), zap.Int64("pipeline_id", pipelineID))
 			return false, nil
 		}
+		r.Log.Debug("resolved open merge request from branch",
+			zap.Int64("project_id", projectID), zap.String("branch", ref), zap.Int64("mr_iid", iid))
 		mrIID = iid
 	}
 
@@ -58,6 +61,8 @@ func (r *Reporter) ProcessPipeline(ctx context.Context, projectID, pipelineID, m
 	if err := r.GitLab.UpsertNote(ctx, projectID, mrIID, report.Marker, body); err != nil {
 		return false, fmt.Errorf("upsert note on MR !%d: %w", mrIID, err)
 	}
+	r.Log.Info("upserted resource report note",
+		zap.Int64("project_id", projectID), zap.Int64("mr_iid", mrIID), zap.Int("body_bytes", len(body)))
 	return true, nil
 }
 
@@ -69,6 +74,8 @@ func (r *Reporter) Build(ctx context.Context, projectID, pipelineID int64) (repo
 	if err != nil {
 		return report.Data{}, fmt.Errorf("list pipeline jobs: %w", err)
 	}
+	r.Log.Debug("listed pipeline jobs",
+		zap.Int64("project_id", projectID), zap.Int64("pipeline_id", pipelineID), zap.Int("jobs", len(jobs)))
 
 	data := report.Data{PipelineID: pipelineID, ThrottleWarnRatio: r.ThrottleWarnRatio}
 	for _, job := range jobs {
@@ -83,20 +90,22 @@ func (r *Reporter) Build(ctx context.Context, projectID, pipelineID int64) (repo
 
 func (r *Reporter) jobUsage(ctx context.Context, projectID int64, job gitlab.Job) *metrics.JobUsage {
 	if job.StartedAt.IsZero() || job.FinishedAt.IsZero() {
+		r.Log.Debug("job never ran, skipping usage", zap.String("job", job.Name))
 		return nil // job never ran (skipped/canceled/manual)
 	}
 	pod, ok, err := r.Resolver.PodForJob(ctx, projectID, job.ID, job.StartedAt, job.FinishedAt)
 	if err != nil {
-		r.Log.Warn("pod correlation failed", "job", job.Name, "err", err)
+		r.Log.Warn("pod correlation failed", zap.String("job", job.Name), zap.Error(err))
 		return nil
 	}
 	if !ok {
-		r.Log.Warn("no runner pod found for job", "job", job.Name)
+		r.Log.Warn("no runner pod found for job", zap.String("job", job.Name))
 		return nil
 	}
+	r.Log.Debug("correlated job to runner pod", zap.String("job", job.Name), zap.String("pod", pod))
 	usage, err := r.Metrics.PodUsage(ctx, pod, job.StartedAt, job.FinishedAt)
 	if err != nil {
-		r.Log.Warn("metrics query failed", "job", job.Name, "pod", pod, "err", err)
+		r.Log.Warn("metrics query failed", zap.String("job", job.Name), zap.String("pod", pod), zap.Error(err))
 		return nil
 	}
 	return usage

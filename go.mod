@@ -8,13 +8,14 @@ require (
 	github.com/prometheus/common v0.70.0
 	github.com/spf13/cobra v1.10.2
 	gitlab.com/gitlab-org/api/client-go v1.46.0
+	go.uber.org/zap v1.28.0
+	golang.org/x/term v0.45.0
 )
 
-require golang.org/x/term v0.45.0 // indirect
+require go.uber.org/multierr v1.10.0 // indirect
 
 require (
 	github.com/andybalholm/brotli v1.2.2 // indirect
-	github.com/charmbracelet/x/term v0.2.2
 	github.com/gofiber/schema v1.8.0 // indirect
 	github.com/gofiber/utils/v2 v2.1.1 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
