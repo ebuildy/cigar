@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/command"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/config"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/correlate"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/gitlab"
@@ -63,6 +65,45 @@ func newReporter(cfg *config.Config, log *zap.Logger) (*reporter.Reporter, error
 		Resolver:          resolver,
 		Metrics:           source,
 		ThrottleWarnRatio: cfg.ThrottleWarnRatio,
+		SigningKey:        []byte(cfg.CommandsSigningKey),
 		Log:               log,
+	}, nil
+}
+
+// newCommandHandler builds the interactive-command handler. It resolves the bot
+// user id once (for the author/loop guard) and reuses the Prometheus source's
+// range-query capability.
+func newCommandHandler(ctx context.Context, cfg *config.Config, log *zap.Logger) (*command.Handler, error) {
+	gl, err := gitlab.New(cfg.GitLabURL, cfg.GitLabToken, log)
+	if err != nil {
+		return nil, err
+	}
+	botID, err := gl.CurrentUser(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve bot user: %w", err)
+	}
+	var resolver correlate.Resolver
+	switch cfg.PodResolver {
+	case "trace":
+		resolver = correlate.NewTraceResolver(gl, log)
+	case "prometheus":
+		resolver, err = correlate.NewPromResolver(cfg.PrometheusURL, cfg.ScrapeInterval, log)
+		if err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("unknown pod resolver %q", cfg.PodResolver)
+	}
+	source, err := metrics.NewPromSource(cfg.PrometheusURL, cfg.ScrapeInterval, log)
+	if err != nil {
+		return nil, err
+	}
+	return &command.Handler{
+		GitLab:     gl,
+		Resolver:   resolver,
+		Series:     source,
+		SigningKey: []byte(cfg.CommandsSigningKey),
+		BotUserID:  botID,
+		Log:        log,
 	}, nil
 }

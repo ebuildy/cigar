@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
+	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/command"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/config"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/reporter"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/webhook"
@@ -31,9 +32,9 @@ func newServeCmd() *cobra.Command {
 
 // queue is a bounded in-memory queue between the webhook handler and the
 // worker; Enqueue never blocks.
-type queue chan webhook.PipelineEvent
+type queue chan webhook.Event
 
-func (q queue) Enqueue(ev webhook.PipelineEvent) bool {
+func (q queue) Enqueue(ev webhook.Event) bool {
 	select {
 	case q <- ev:
 		return true
@@ -59,15 +60,27 @@ func serve(ctx context.Context) error {
 		return err
 	}
 
+	if cfg.CommandsEnabled && cfg.CommandsSigningKey == "" {
+		return errors.New("COMMANDS_ENABLED is true but COMMANDS_SIGNING_KEY is not set")
+	}
+	var cmdHandler *command.Handler
+	if cfg.CommandsEnabled {
+		cmdHandler, err = newCommandHandler(ctx, cfg, log)
+		if err != nil {
+			return err
+		}
+		log.Info("interactive commands enabled")
+	}
+
 	q := make(queue, 128)
-	go worker(ctx, q, rep, log)
+	go worker(ctx, q, rep, cmdHandler, log)
 	log.Debug("worker started")
 
 	auths, err := buildAuthenticators(cfg)
 	if err != nil {
 		return err
 	}
-	app := webhook.NewApp(auths, q, log)
+	app := webhook.NewApp(auths, q, log, cfg.CommandsEnabled)
 
 	ops := fiber.New(fiber.Config{ReadTimeout: 5 * time.Second})
 	ops.Get("/healthz", func(c fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
@@ -100,16 +113,36 @@ func serve(ctx context.Context) error {
 	return nil
 }
 
-// worker consumes validated pipeline events and posts MR comments.
-func worker(ctx context.Context, q queue, rep *reporter.Reporter, log *zap.Logger) {
+// worker consumes validated pipeline and note events, posting MR comments and
+// handling interactive commands respectively.
+func worker(ctx context.Context, q queue, rep *reporter.Reporter, cmd *command.Handler, log *zap.Logger) {
+	seen := make(map[int64]bool) // note IDs already handled (dedup retried deliveries)
 	for {
 		select {
 		case <-ctx.Done():
 			log.Debug("worker stopping", zap.Error(ctx.Err()))
 			return
 		case ev := <-q:
-			process(ctx, rep, ev, log)
+			switch {
+			case ev.Pipeline != nil:
+				process(ctx, rep, *ev.Pipeline, log)
+			case ev.Note != nil && cmd != nil:
+				processNote(ctx, cmd, seen, *ev.Note, log)
+			}
 		}
+	}
+}
+
+func processNote(ctx context.Context, h *command.Handler, seen map[int64]bool, ev command.NoteEvent, log *zap.Logger) {
+	if seen[ev.NoteID] {
+		log.Debug("duplicate note delivery ignored", zap.Int64("note_id", ev.NoteID))
+		return
+	}
+	seen[ev.NoteID] = true
+	ctx, cancel := context.WithTimeout(ctx, processTimeout)
+	defer cancel()
+	if err := h.Handle(ctx, ev); err != nil {
+		log.Error("handle command note failed", zap.Int64("note_id", ev.NoteID), zap.Error(err))
 	}
 }
 
