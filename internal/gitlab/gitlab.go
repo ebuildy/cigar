@@ -30,7 +30,7 @@ func (a *apiClient) PipelineJobs(ctx context.Context, projectID, pipelineID int6
 			return nil, fmt.Errorf("list jobs of pipeline %d: %w", pipelineID, err)
 		}
 		for _, j := range page {
-			job := Job{ID: j.ID, Name: j.Name}
+			job := Job{ID: j.ID, Stage: j.Stage, Name: j.Name}
 			if j.StartedAt != nil {
 				job.StartedAt = *j.StartedAt
 			}
@@ -47,21 +47,20 @@ func (a *apiClient) PipelineJobs(ctx context.Context, projectID, pipelineID int6
 	return jobs, nil
 }
 
-func (a *apiClient) MergeRequestForPipeline(ctx context.Context, projectID, pipelineID int64) (int64, bool, error) {
-	p, _, err := a.c.Pipelines.GetPipeline(projectID, pipelineID, gl.WithContext(ctx))
+func (a *apiClient) MergeRequestForBranch(ctx context.Context, projectID int64, branch string) (int64, bool, error) {
+	opts := &gl.ListProjectMergeRequestsOptions{
+		SourceBranch: gl.Ptr(branch),
+		State:        gl.Ptr("opened"),
+		ListOptions:  gl.ListOptions{PerPage: 1},
+	}
+	mrs, _, err := a.c.MergeRequests.ListProjectMergeRequests(projectID, opts, gl.WithContext(ctx))
 	if err != nil {
-		return 0, false, fmt.Errorf("get pipeline %d: %w", pipelineID, err)
+		return 0, false, fmt.Errorf("list open MRs for branch %q: %w", branch, err)
 	}
-	mrs, _, err := a.c.Commits.ListMergeRequestsByCommit(projectID, p.SHA, gl.WithContext(ctx))
-	if err != nil {
-		return 0, false, fmt.Errorf("list MRs for commit %s: %w", p.SHA, err)
+	if len(mrs) == 0 {
+		return 0, false, nil
 	}
-	for _, mr := range mrs {
-		if mr.State == "opened" {
-			return mr.IID, true, nil
-		}
-	}
-	return 0, false, nil
+	return mrs[0].IID, true, nil
 }
 
 func (a *apiClient) UpsertNote(ctx context.Context, projectID, mrIID int64, marker, body string) error {

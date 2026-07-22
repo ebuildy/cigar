@@ -63,7 +63,7 @@ func main() {
 		SilenceErrors: true,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
 			if term.IsTerminal(int(os.Stdout.Fd())) {
-				os.Stdout.WriteString(banner(true))
+				_, _ = os.Stdout.WriteString(banner(true))
 			}
 		},
 	}
