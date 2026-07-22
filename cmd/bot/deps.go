@@ -42,9 +42,15 @@ func newReporter(cfg *config.Config, log *zap.Logger) (*reporter.Reporter, error
 	if err != nil {
 		return nil, err
 	}
-	resolver, err := correlate.NewPromResolver(cfg.PrometheusURL, cfg.ScrapeInterval, log)
-	if err != nil {
-		return nil, err
+	var resolver correlate.Resolver
+	switch cfg.PodResolver {
+	case "trace":
+		resolver = correlate.NewTraceResolver(gl, log)
+	case "prometheus":
+		resolver, err = correlate.NewPromResolver(cfg.PrometheusURL, cfg.ScrapeInterval, log)
+		if err != nil {
+			return nil, err
+		}
 	}
 	source, err := metrics.NewPromSource(cfg.PrometheusURL, cfg.ScrapeInterval, log)
 	if err != nil {
