@@ -16,7 +16,7 @@ const MarkerPrefix = "<!-- ci-resources-bot"
 
 func markerSignature(pipelineID, mrIID int64, key []byte) string {
 	mac := hmac.New(sha256.New, key)
-	fmt.Fprintf(mac, "p=%d;m=%d", pipelineID, mrIID)
+	_, _ = fmt.Fprintf(mac, "p=%d;m=%d", pipelineID, mrIID)
 	return hex.EncodeToString(mac.Sum(nil))
 }
 

@@ -28,11 +28,18 @@ config:
   # Empty defaults to "secret" (legacy X-Gitlab-Token).
   authMethods: ""
 
+# Interactive report commands: reply to the bot's MR report comment with
+# "help" / "details [job|pod] <name>". Off by default.
+commands:
+  # COMMANDS_ENABLED. Requires secrets.commandsSigningKey (or the equivalent
+  # key in secrets.existingSecret) to be set.
+  enabled: false
+
 secrets:
   # Name of an existing Secret holding GITLAB_TOKEN plus whichever auth keys
   # the enabled AUTH_METHODS need (WEBHOOK_SECRET for secret,
-  # WEBHOOK_SIGNING_TOKEN for signature). Recommended (sealed-secrets,
-  # external-secrets, ...).
+  # WEBHOOK_SIGNING_TOKEN for signature), plus COMMANDS_SIGNING_KEY when
+  # commands.enabled is true. Recommended (sealed-secrets, external-secrets, ...).
   existingSecret: ""
   # Alternatively set the values here and the chart creates the Secret
   # itself. Avoid committing real values to git.
@@ -41,6 +48,10 @@ secrets:
   # config.authMethods includes "signature". Prefer existingSecret in production.
   signingToken: ""
   gitlabToken: ""
+  # COMMANDS_SIGNING_KEY: HMAC key signing the report marker for interactive
+  # commands. Required only when commands.enabled is true; must be a stable
+  # random secret shared by every replica. Prefer existingSecret in production.
+  commandsSigningKey: ""
 
 # Extra environment variables for the bot container.
 extraEnv: []

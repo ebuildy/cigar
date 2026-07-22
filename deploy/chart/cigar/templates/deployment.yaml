@@ -73,6 +73,15 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secrets.existingSecret | default (include "cigar.fullname" .) }}
                   key: GITLAB_TOKEN
+            {{- if .Values.commands.enabled }}
+            - name: COMMANDS_ENABLED
+              value: {{ .Values.commands.enabled | quote }}
+            - name: COMMANDS_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret | default (include "cigar.fullname" .) }}
+                  key: COMMANDS_SIGNING_KEY
+            {{- end }}
             - name: GITLAB_URL
               value: {{ .Values.config.gitlabUrl | quote }}
             - name: PROMETHEUS_URL
