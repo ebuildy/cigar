@@ -22,6 +22,8 @@ type Config struct {
 	ListenAddr          string
 	OpsAddr             string
 	PodResolver         string
+	CommandsEnabled     bool
+	CommandsSigningKey  string
 }
 
 func Load() (*Config, error) {
@@ -36,6 +38,7 @@ func Load() (*Config, error) {
 		ListenAddr:          getenv("LISTEN_ADDR", ":8080"),
 		OpsAddr:             getenv("OPS_ADDR", ":8081"),
 		PodResolver:         getenv("POD_RESOLVER", "trace"),
+		CommandsSigningKey:  os.Getenv("COMMANDS_SIGNING_KEY"),
 	}
 	// LOG_LEVEL is consumed by the --log-level root flag (cmd/bot), not here.
 
@@ -53,6 +56,14 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("SCRAPE_INTERVAL must be a positive duration, got %q", v)
 		}
 		cfg.ScrapeInterval = d
+	}
+
+	if v := os.Getenv("COMMANDS_ENABLED"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("COMMANDS_ENABLED must be a boolean, got %q", v)
+		}
+		cfg.CommandsEnabled = b
 	}
 
 	if !validPodResolvers[cfg.PodResolver] {
