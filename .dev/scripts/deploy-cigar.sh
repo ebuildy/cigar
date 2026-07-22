@@ -67,9 +67,25 @@ else
   echo "    reusing existing WEBHOOK_SECRET"
 fi
 
+echo "==> Ensuring a stable WEBHOOK_SIGNING_TOKEN (GitLab signing-token auth)"
+# The bot runs with AUTH_METHODS=signature (see helmfile), so it verifies the
+# webhook-signature HMAC against this token. It must be the whsec_-prefixed,
+# base64 form GitLab requires (a plain string is rejected with 422), and must
+# stay stable so the signing_token already stored on every project hook keeps
+# matching — same rationale as WEBHOOK_SECRET above.
+WEBHOOK_SIGNING_TOKEN=$(kubectl --context "$KUBE_CONTEXT" -n cigar get secret cigar-secrets \
+  -o jsonpath='{.data.WEBHOOK_SIGNING_TOKEN}' 2>/dev/null | base64 -d || true)
+if [[ -z "$WEBHOOK_SIGNING_TOKEN" ]]; then
+  WEBHOOK_SIGNING_TOKEN="whsec_$(openssl rand -base64 32)"
+  echo "    minted a new WEBHOOK_SIGNING_TOKEN"
+else
+  echo "    reusing existing WEBHOOK_SIGNING_TOKEN"
+fi
+
 echo "==> Writing cigar-secrets"
 kubectl --context "$KUBE_CONTEXT" -n cigar create secret generic cigar-secrets \
   --from-literal=WEBHOOK_SECRET="$WEBHOOK_SECRET" \
+  --from-literal=WEBHOOK_SIGNING_TOKEN="$WEBHOOK_SIGNING_TOKEN" \
   --from-literal=GITLAB_TOKEN="$GITLAB_TOKEN" \
   --dry-run=client -o yaml | kubectl --context "$KUBE_CONTEXT" apply -f - >/dev/null
 
@@ -108,23 +124,24 @@ for h in json.load(sys.stdin):
         print(h['id']); break
 ")
     if [[ -n "$hook_id" ]]; then
-      # Refresh the token (and settings) on the existing hook so it always
-      # matches the current WEBHOOK_SECRET — otherwise a rotated secret 401s.
+      # Refresh the signing token (and settings) on the existing hook so it
+      # always matches the current WEBHOOK_SIGNING_TOKEN — otherwise a rotated
+      # token makes every signature verification 401.
       curl -sf -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
         -X PUT "$API/projects/$id/hooks/$hook_id" \
         --data-urlencode "url=$WEBHOOK_URL" \
-        --data-urlencode "token=$WEBHOOK_SECRET" \
+        --data-urlencode "signing_token=$WEBHOOK_SIGNING_TOKEN" \
         --data-urlencode "pipeline_events=true" \
         --data-urlencode "enable_ssl_verification=false" \
         -o /dev/null
-      echo "    [$path] token refreshed"
+      echo "    [$path] signing token refreshed"
       updated=$((updated + 1))
       continue
     fi
     curl -sf -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
       -X POST "$API/projects/$id/hooks" \
       --data-urlencode "url=$WEBHOOK_URL" \
-      --data-urlencode "token=$WEBHOOK_SECRET" \
+      --data-urlencode "signing_token=$WEBHOOK_SIGNING_TOKEN" \
       --data-urlencode "pipeline_events=true" \
       --data-urlencode "enable_ssl_verification=false" \
       -o /dev/null

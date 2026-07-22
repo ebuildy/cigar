@@ -41,6 +41,15 @@ internal/
 - `webhook` must not know about Prometheus or GitLab clients — it enqueues work; a worker processes it. Webhook handler returns `200` fast (GitLab timeout is 10s; metric queries can be slow).
 - Use interfaces at package boundaries (`metrics.Source`, `gitlab.Client`) so tests can stub them.
 
+## Documentation
+
+All project documentation lives under `docs/` — never add stray Markdown docs at
+the repo root. The only permitted root-level docs are `README.md` (repo landing
+page) and this `CLAUDE.md`; everything else (usage guides, design specs,
+implementation plans, runbooks, ADRs) goes in `docs/` (e.g. `docs/usage.md`,
+`docs/superpowers/specs/`, `docs/superpowers/plans/`). When adding a new doc,
+create it in `docs/` and link it from `README.md` if it's user-facing.
+
 ## Key implementation notes
 
 ### Webhook security (non-negotiable)
