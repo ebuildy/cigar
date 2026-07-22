@@ -20,6 +20,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
 
+	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/command"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/correlate"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/gitlab"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/metrics"
@@ -37,6 +38,7 @@ const (
 	jobID         = 101
 	branchRef     = "feature-x"
 	podName       = "runner-abc123-project-7-concurrent-0"
+	commandsKey   = "e2e-commands-key"
 )
 
 func e2eSigningToken() string {
@@ -49,6 +51,8 @@ type mockGitLab struct {
 	mu      sync.Mutex
 	notes   []string // note bodies, index+1 = note ID
 	updates int
+	uploads int
+	replies []string
 }
 
 func (m *mockGitLab) server(t *testing.T) *httptest.Server {
@@ -100,6 +104,30 @@ func (m *mockGitLab) server(t *testing.T) *httptest.Server {
 		func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = fmt.Fprintf(w, "Preparing environment\nRunning on %s via gitlab-runner-mgr...\nJob succeeded\n", podName)
 		})
+	mux.HandleFunc("GET /api/v4/user", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"id":555,"username":"cigar-bot"}`)
+	})
+	mux.HandleFunc(fmt.Sprintf("GET /api/v4/projects/%d/merge_requests/%d/discussions/{id}", projectID, mrIID),
+		func(w http.ResponseWriter, _ *http.Request) {
+			marker := report.SignedMarker(pipelineID, mrIID, []byte(commandsKey))
+			_, _ = fmt.Fprintf(w, `{"id":"disc1","notes":[{"id":1,"body":%q,"author":{"id":555}}]}`, marker)
+		})
+	mux.HandleFunc(fmt.Sprintf("POST /api/v4/projects/%d/uploads", projectID),
+		func(w http.ResponseWriter, _ *http.Request) {
+			m.mu.Lock()
+			m.uploads++
+			m.mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprint(w, `{"markdown":"![c](/uploads/x/c.svg)","url":"/uploads/x/c.svg"}`)
+		})
+	mux.HandleFunc(fmt.Sprintf("POST /api/v4/projects/%d/merge_requests/%d/discussions/{id}/notes", projectID, mrIID),
+		func(w http.ResponseWriter, r *http.Request) {
+			m.mu.Lock()
+			m.replies = append(m.replies, noteBody(t, r))
+			m.mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprint(w, `{"id":99}`)
+		})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("mock gitlab: unexpected request %s %s", r.Method, r.URL.Path)
 		w.WriteHeader(http.StatusNotFound)
@@ -129,6 +157,15 @@ type mockProm struct {
 func (m *mockProm) server(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/api/v1/query_range") {
+			_ = r.ParseForm()
+			m.mu.Lock()
+			m.queries = append(m.queries, r.FormValue("query"))
+			m.mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `{"status":"success","data":{"resultType":"matrix","result":[{"metric":{},"values":[[1752912000,"1"],[1752912030,"2"]]}]}}`)
+			return
+		}
 		if !strings.HasSuffix(r.URL.Path, "/api/v1/query") {
 			t.Errorf("mock prometheus: unexpected request %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -206,20 +243,36 @@ func harness(t *testing.T, podResolver string) (*fiber.App, *mockGitLab, *mockPr
 	// Same queue+worker shape as `bot serve`: merge_request may be absent, in
 	// which case ProcessPipeline resolves the MR from the branch ref.
 	ctx := t.Context()
-	q := make(chan webhook.PipelineEvent, 8)
+	q := make(chan webhook.Event, 8)
+	cmdHandler := &command.Handler{
+		GitLab:     glClient,
+		Resolver:   resolver,
+		Series:     source, // *metrics.PromSource satisfies metrics.SeriesSource
+		SigningKey: []byte(commandsKey),
+		BotUserID:  555,
+		Log:        log,
+	}
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case ev := <-q:
-				var mrIID int64
-				if ev.MergeRequest != nil {
-					mrIID = ev.MergeRequest.IID
-				}
-				if _, err := rep.ProcessPipeline(ctx, ev.Project.ID, ev.ObjectAttributes.ID,
-					mrIID, ev.ObjectAttributes.Ref, ev.ObjectAttributes.Status); err != nil {
-					t.Errorf("process pipeline: %v", err)
+				switch {
+				case ev.Pipeline != nil:
+					pe := ev.Pipeline
+					var mrIID int64
+					if pe.MergeRequest != nil {
+						mrIID = pe.MergeRequest.IID
+					}
+					if _, err := rep.ProcessPipeline(ctx, pe.Project.ID, pe.ObjectAttributes.ID,
+						mrIID, pe.ObjectAttributes.Ref, pe.ObjectAttributes.Status); err != nil {
+						t.Errorf("process pipeline: %v", err)
+					}
+				case ev.Note != nil:
+					if err := cmdHandler.Handle(ctx, *ev.Note); err != nil {
+						t.Errorf("handle note: %v", err)
+					}
 				}
 			}
 		}
@@ -228,7 +281,7 @@ func harness(t *testing.T, podResolver string) (*fiber.App, *mockGitLab, *mockPr
 	if err != nil {
 		t.Fatalf("signature auth: %v", err)
 	}
-	return webhook.NewApp([]webhook.Authenticator{sigAuth}, chanQueue(q), log), glMock, promMock
+	return webhook.NewApp([]webhook.Authenticator{sigAuth}, chanQueue(q), log, true), glMock, promMock
 }
 
 func TestWebhookToMRNote(t *testing.T) {
@@ -341,9 +394,9 @@ func TestWebhookTraceResolver(t *testing.T) {
 	}
 }
 
-type chanQueue chan webhook.PipelineEvent
+type chanQueue chan webhook.Event
 
-func (q chanQueue) Enqueue(ev webhook.PipelineEvent) bool {
+func (q chanQueue) Enqueue(ev webhook.Event) bool {
 	select {
 	case q <- ev:
 		return true
@@ -383,4 +436,63 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for %s", what)
+}
+
+func postNoteWebhook(t *testing.T, app *fiber.App, payload string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(payload))
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	const msgID = "e2e-note"
+	mac := hmac.New(sha256.New, []byte(signingKeyRaw))
+	mac.Write([]byte(msgID + "." + ts + "." + payload))
+	req.Header.Set("webhook-id", msgID)
+	req.Header.Set("webhook-timestamp", ts)
+	req.Header.Set("webhook-signature", "v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)))
+	req.Header.Set("X-Gitlab-Event", "Note Hook")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("deliver note webhook: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("note webhook status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestNoteCommandDetailsJob(t *testing.T) {
+	app, glMock, _ := harness(t, "trace")
+	payload := fmt.Sprintf(`{
+		"object_kind":"note",
+		"object_attributes":{"id":77,"note":"details job build","noteable_type":"MergeRequest","discussion_id":"disc1","author_id":9},
+		"project":{"id":%d},
+		"merge_request":{"iid":%d}
+	}`, projectID, mrIID)
+
+	postNoteWebhook(t, app, payload)
+	waitFor(t, "command reply posted", func() bool {
+		glMock.mu.Lock()
+		defer glMock.mu.Unlock()
+		return len(glMock.replies) == 1
+	})
+	glMock.mu.Lock()
+	defer glMock.mu.Unlock()
+	if glMock.uploads != 3 {
+		t.Fatalf("uploads = %d, want 3", glMock.uploads)
+	}
+}
+
+func TestNoteCommandLoopGuard(t *testing.T) {
+	app, glMock, _ := harness(t, "trace")
+	payload := fmt.Sprintf(`{
+		"object_kind":"note",
+		"object_attributes":{"id":78,"note":"help","noteable_type":"MergeRequest","discussion_id":"disc1","author_id":555},
+		"project":{"id":%d},"merge_request":{"iid":%d}
+	}`, projectID, mrIID)
+	postNoteWebhook(t, app, payload)
+	time.Sleep(200 * time.Millisecond)
+	glMock.mu.Lock()
+	defer glMock.mu.Unlock()
+	if len(glMock.replies) != 0 {
+		t.Fatalf("replied to the bot's own note; replies=%d", len(glMock.replies))
+	}
 }
