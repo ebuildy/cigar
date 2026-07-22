@@ -79,6 +79,9 @@ func (r *Reporter) Build(ctx context.Context, projectID, pipelineID int64) (repo
 
 	data := report.Data{PipelineID: pipelineID, ThrottleWarnRatio: r.ThrottleWarnRatio}
 	for _, job := range jobs {
+		if !job.StartedAt.IsZero() && !job.FinishedAt.IsZero() {
+			data.RanJobs++
+		}
 		data.Jobs = append(data.Jobs, report.JobReport{
 			Stage: job.Stage,
 			Name:  job.Name,

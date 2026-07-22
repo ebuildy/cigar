@@ -145,6 +145,28 @@ func TestBuildMapsStageAndName(t *testing.T) {
 	}
 }
 
+func TestBuildCountsRanJobs(t *testing.T) {
+	started := time.Now().Add(-5 * time.Minute)
+	finished := time.Now()
+	gl := &fakeGitLab{jobs: []gitlab.Job{
+		{ID: 1, Name: "ran", StartedAt: started, FinishedAt: finished},
+		{ID: 2, Name: "manual"}, // no timestamps: never ran
+	}}
+	r := &Reporter{
+		GitLab:   gl,
+		Resolver: &fakeResolver{}, // no pods resolved
+		Metrics:  &fakeSource{},
+		Log:      zap.NewNop(),
+	}
+	data, err := r.Build(context.Background(), 7, 42)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if data.RanJobs != 1 {
+		t.Fatalf("RanJobs = %d, want 1 (only the job with timestamps ran)", data.RanJobs)
+	}
+}
+
 func TestBuild(t *testing.T) {
 	started := time.Now().Add(-5 * time.Minute)
 	finished := time.Now()

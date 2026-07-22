@@ -31,6 +31,22 @@ type Data struct {
 	// ThrottleWarnRatio is the threshold above which a job gets a ⚠️ CPU
 	// throttling warning with KUBERNETES_CPU_REQUEST/LIMIT advice.
 	ThrottleWarnRatio float64
+
+	// RanJobs is how many jobs actually executed (had start and finish times).
+	// When it is > 0 but no job produced usage — every runner pod failed to
+	// correlate — Render emits a "no resource data" error notice instead of an
+	// empty report of zeros.
+	RanJobs int
+}
+
+// hasUsage reports whether any job produced resource-usage data.
+func (d Data) hasUsage() bool {
+	for _, j := range d.Jobs {
+		if j.Usage != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // totals aggregates resource usage across every job that has usage data.
@@ -65,9 +81,17 @@ func Render(d Data) (string, error) {
 	b.WriteString(Marker)
 	b.WriteString("\n\n")
 
-	t := d.totals()
 	fmt.Fprintf(&b, "## Pipeline #%d resource report — %s\n\n", d.PipelineID, d.Status)
 
+	// Jobs ran but not one could be correlated to a runner pod: surface an
+	// error rather than an empty table of zeros ("absent ≠ zero").
+	if d.RanJobs > 0 && !d.hasUsage() {
+		b.WriteString("> ⚠️ **No resource data available.** None of this pipeline's jobs could be correlated to a runner pod, so no CPU or memory metrics were collected.\n>\n")
+		b.WriteString("> This usually means the jobs did not run on the Kubernetes runner, or the runner pod could not be identified from the job trace.\n")
+		return b.String(), nil
+	}
+
+	t := d.totals()
 	b.WriteString("### Summary\n\n")
 	b.WriteString("| Resource | Total |\n|---|---|\n")
 	fmt.Fprintf(&b, "| CPU time | %s |\n", cpuTime(t.CPUSeconds))

@@ -69,6 +69,57 @@ func TestRenderGolden(t *testing.T) {
 	}
 }
 
+func TestRenderErrorWhenNoPodsResolved(t *testing.T) {
+	// Jobs ran but none could be correlated to a runner pod: the report must
+	// surface an error notice, not an empty summary of zeros.
+	d := Data{
+		PipelineID: 55,
+		Status:     "success",
+		RanJobs:    2,
+		Jobs: []JobReport{
+			{Stage: "build", Name: "compile", Usage: nil},
+			{Stage: "test", Name: "unit", Usage: nil},
+		},
+	}
+	out := mustRender(t, d)
+
+	if !strings.HasPrefix(out, Marker) {
+		t.Fatalf("report must start with marker, got:\n%s", out)
+	}
+	if !strings.Contains(out, "No resource data") {
+		t.Errorf("expected an error notice about missing resource data, got:\n%s", out)
+	}
+	// The empty summary/details tables must not be rendered.
+	if strings.Contains(out, "### Summary") || strings.Contains(out, "### Details") {
+		t.Errorf("empty report must not render summary/details tables, got:\n%s", out)
+	}
+	// Never fabricate zeros.
+	if strings.Contains(out, "0.0 s") || strings.Contains(out, "0 B") {
+		t.Errorf("error report must not show fabricated zeros, got:\n%s", out)
+	}
+}
+
+func TestRenderNormalWhenSomeUsageDespiteRanJobs(t *testing.T) {
+	// At least one job has usage: render the normal report even though another
+	// ran without a pod (partial data is not an error).
+	d := Data{
+		PipelineID: 56,
+		Status:     "success",
+		RanJobs:    2,
+		Jobs: []JobReport{
+			{Stage: "build", Name: "compile", Usage: &metrics.JobUsage{CPUSeconds: 3, PeakMemoryBytes: 64 * 1024 * 1024}},
+			{Stage: "test", Name: "unit", Usage: nil},
+		},
+	}
+	out := mustRender(t, d)
+	if !strings.Contains(out, "### Summary") {
+		t.Errorf("partial report should still render the summary, got:\n%s", out)
+	}
+	if strings.Contains(out, "No resource data") {
+		t.Errorf("partial report must not show the no-data error, got:\n%s", out)
+	}
+}
+
 func TestRenderStartsWithMarker(t *testing.T) {
 	out := mustRender(t, Data{PipelineID: 1, Status: "success"})
 	if !strings.HasPrefix(out, Marker) {
