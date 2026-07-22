@@ -63,11 +63,12 @@ create it in `docs/` and link it from `README.md` if it's user-facing.
 
 ### Pod ↔ job correlation
 
-GitLab Kubernetes executor pods carry labels/annotations like `job_id`, `project_id` (runner ≥ some versions; verify against our runner config). Correlate via cadvisor/kube-state-metrics labels:
+The pod-correlation strategy is selected by `POD_RESOLVER` (default `trace`):
 
-- Preferred: `kube_pod_labels{label_job_id="<id>"}` join to find pod name, then filter cadvisor series by `pod`.
-- Fallback: pod name pattern `runner-<token>-project-<id>-concurrent-<n>` within the job's `started_at`–`finished_at` window.
-- Always exclude the `POD`/pause container (`container!="", container!="POD"`).
+- `trace` (default): fetch the job's GitLab trace and parse the runner's `Running on <pod> via <manager>` line (first match wins, ANSI-tolerant). For the Kubernetes executor `<pod>` is the build pod's hostname, matching the cadvisor `pod` label. No pod-label scraping required. See `internal/correlate/trace.go`.
+- `prometheus`: join `kube_pod_labels{label_job_id="<id>"}` to find the pod name, then filter cadvisor series by `pod`. Requires the runner to inject a `job_id` pod label that kube-state-metrics exposes. See `internal/correlate/prom.go`.
+
+Either way, always exclude the `POD`/pause container (`container!="", container!="POD"`), and pod name follows the pattern `runner-<token>-project-<id>-concurrent-<n>`.
 
 ### PromQL queries (per job, over `[started_at, finished_at]`)
 
@@ -87,7 +88,7 @@ GitLab Kubernetes executor pods carry labels/annotations like `job_id`, `project
 
 ### Config (env only, 12-factor)
 
-`AUTH_METHODS` (default `secret`), `WEBHOOK_SECRET`, `WEBHOOK_SIGNING_TOKEN`, `GITLAB_URL`, `GITLAB_TOKEN`, `PROMETHEUS_URL`, `THROTTLE_WARN_RATIO` (default `0.25`), `SCRAPE_INTERVAL` (default `30s`), `LISTEN_ADDR`, `LOG_LEVEL` (default `info`; also settable via the `--log-level` root flag, which takes precedence). Fail fast at startup on missing required vars. `WEBHOOK_SECRET` is required only when `secret` is an enabled auth method; `WEBHOOK_SIGNING_TOKEN` is required only when `signature` is an enabled auth method. Both are required by `serve` only — `bot run` works without either.
+`AUTH_METHODS` (default `secret`), `WEBHOOK_SECRET`, `WEBHOOK_SIGNING_TOKEN`, `GITLAB_URL`, `GITLAB_TOKEN`, `PROMETHEUS_URL`, `POD_RESOLVER` (default `trace`; `trace` parses the job's GitLab trace for the `Running on <pod> via …` line, `prometheus` joins `kube_pod_labels{label_job_id}`), `THROTTLE_WARN_RATIO` (default `0.25`), `SCRAPE_INTERVAL` (default `30s`), `LISTEN_ADDR`, `LOG_LEVEL` (default `info`; also settable via the `--log-level` root flag, which takes precedence). Fail fast at startup on missing required vars. `WEBHOOK_SECRET` is required only when `secret` is an enabled auth method; `WEBHOOK_SIGNING_TOKEN` is required only when `signature` is an enabled auth method. Both are required by `serve` only — `bot run` works without either.
 
 ## Go conventions
 

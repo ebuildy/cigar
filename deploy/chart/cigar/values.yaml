@@ -15,6 +15,9 @@ config:
   gitlabUrl: "https://gitlab.com"
   # Prometheus base URL — must scrape cadvisor and kube-state-metrics.
   prometheusUrl: "http://prometheus-operated.monitoring.svc:9090"
+  # Pod-correlation strategy: "trace" (parse the job's GitLab trace) or
+  # "prometheus" (join kube_pod_labels{label_job_id}).
+  podResolver: "trace"
   # Throttled-periods ratio above which a job gets a throttling warning.
   throttleWarnRatio: "0.25"
   # Prometheus scrape interval; query windows are padded by one interval.

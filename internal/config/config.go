@@ -21,6 +21,7 @@ type Config struct {
 	ScrapeInterval      time.Duration
 	ListenAddr          string
 	OpsAddr             string
+	PodResolver         string
 }
 
 func Load() (*Config, error) {
@@ -34,6 +35,7 @@ func Load() (*Config, error) {
 		ScrapeInterval:      30 * time.Second,
 		ListenAddr:          getenv("LISTEN_ADDR", ":8080"),
 		OpsAddr:             getenv("OPS_ADDR", ":8081"),
+		PodResolver:         getenv("POD_RESOLVER", "trace"),
 	}
 	// LOG_LEVEL is consumed by the --log-level root flag (cmd/bot), not here.
 
@@ -51,6 +53,10 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("SCRAPE_INTERVAL must be a positive duration, got %q", v)
 		}
 		cfg.ScrapeInterval = d
+	}
+
+	if !validPodResolvers[cfg.PodResolver] {
+		return nil, fmt.Errorf("POD_RESOLVER must be one of prometheus, trace, got %q", cfg.PodResolver)
 	}
 
 	// WEBHOOK_SECRET is only required by `serve`, which validates it itself.
@@ -80,6 +86,7 @@ func getenv(key, def string) string {
 }
 
 var validAuthMethods = map[string]bool{"secret": true, "signature": true}
+var validPodResolvers = map[string]bool{"prometheus": true, "trace": true}
 
 // parseAuthMethods parses the comma-separated, ordered AUTH_METHODS list.
 // Order is significant (the handler tries methods in this order). An empty

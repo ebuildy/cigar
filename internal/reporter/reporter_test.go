@@ -37,6 +37,10 @@ func (f *fakeGitLab) UpsertNote(_ context.Context, _, mrIID int64, _, _ string) 
 	return nil
 }
 
+func (f *fakeGitLab) JobTrace(_ context.Context, _, _ int64) (string, error) {
+	return "", nil
+}
+
 type fakeResolver struct {
 	pods map[int64]string // job ID -> pod name
 	err  error
@@ -138,6 +142,28 @@ func TestBuildMapsStageAndName(t *testing.T) {
 	}
 	if got := data.Jobs[0].Name; got != "compile" {
 		t.Errorf("Name = %q, want %q", got, "compile")
+	}
+}
+
+func TestBuildCountsRanJobs(t *testing.T) {
+	started := time.Now().Add(-5 * time.Minute)
+	finished := time.Now()
+	gl := &fakeGitLab{jobs: []gitlab.Job{
+		{ID: 1, Name: "ran", StartedAt: started, FinishedAt: finished},
+		{ID: 2, Name: "manual"}, // no timestamps: never ran
+	}}
+	r := &Reporter{
+		GitLab:   gl,
+		Resolver: &fakeResolver{}, // no pods resolved
+		Metrics:  &fakeSource{},
+		Log:      zap.NewNop(),
+	}
+	data, err := r.Build(context.Background(), 7, 42)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if data.RanJobs != 1 {
+		t.Fatalf("RanJobs = %d, want 1 (only the job with timestamps ran)", data.RanJobs)
 	}
 }
 

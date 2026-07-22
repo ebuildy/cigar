@@ -96,6 +96,10 @@ func (m *mockGitLab) server(t *testing.T) *httptest.Server {
 			m.updates++
 			_, _ = fmt.Fprint(w, `{"id":1}`)
 		})
+	mux.HandleFunc(fmt.Sprintf("GET /api/v4/projects/%d/jobs/%d/trace", projectID, jobID),
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = fmt.Fprintf(w, "Preparing environment\nRunning on %s via gitlab-runner-mgr...\nJob succeeded\n", podName)
+		})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("mock gitlab: unexpected request %s %s", r.Method, r.URL.Path)
 		w.WriteHeader(http.StatusNotFound)
@@ -164,7 +168,7 @@ func (m *mockProm) sawQuery(substr string) bool {
 // harness wires the real webhook app + queue + worker + clients against the
 // mock GitLab/Prometheus servers, mirroring `bot serve`. It returns the app to
 // deliver webhooks to plus the two mocks to assert against.
-func harness(t *testing.T) (*fiber.App, *mockGitLab, *mockProm) {
+func harness(t *testing.T, podResolver string) (*fiber.App, *mockGitLab, *mockProm) {
 	t.Helper()
 	glMock := &mockGitLab{}
 	promMock := &mockProm{}
@@ -176,9 +180,16 @@ func harness(t *testing.T) (*fiber.App, *mockGitLab, *mockProm) {
 	if err != nil {
 		t.Fatalf("gitlab client: %v", err)
 	}
-	resolver, err := correlate.NewPromResolver(promSrv.URL, 30*time.Second, log)
-	if err != nil {
-		t.Fatalf("resolver: %v", err)
+	var resolver correlate.Resolver
+	switch podResolver {
+	case "trace":
+		resolver = correlate.NewTraceResolver(glClient, log)
+	default:
+		var err error
+		resolver, err = correlate.NewPromResolver(promSrv.URL, 30*time.Second, log)
+		if err != nil {
+			t.Fatalf("resolver: %v", err)
+		}
 	}
 	source, err := metrics.NewPromSource(promSrv.URL, 30*time.Second, log)
 	if err != nil {
@@ -221,7 +232,7 @@ func harness(t *testing.T) (*fiber.App, *mockGitLab, *mockProm) {
 }
 
 func TestWebhookToMRNote(t *testing.T) {
-	app, glMock, promMock := harness(t)
+	app, glMock, promMock := harness(t, "prometheus")
 
 	payload := fmt.Sprintf(`{
 		"object_kind": "pipeline",
@@ -279,7 +290,7 @@ func TestWebhookToMRNote(t *testing.T) {
 // merge_request (branch pushed before the MR was created): the worker must
 // resolve the open MR from object_attributes.ref and still post the note.
 func TestWebhookBranchResolvesMR(t *testing.T) {
-	app, glMock, _ := harness(t)
+	app, glMock, _ := harness(t, "prometheus")
 
 	// No "merge_request" field — only the branch ref.
 	payload := fmt.Sprintf(`{
@@ -299,6 +310,34 @@ func TestWebhookBranchResolvesMR(t *testing.T) {
 	defer glMock.mu.Unlock()
 	if !strings.Contains(glMock.notes[0], report.Marker) {
 		t.Errorf("note body missing marker %q:\n%s", report.Marker, glMock.notes[0])
+	}
+}
+
+// TestWebhookTraceResolver drives the full chain with POD_RESOLVER=trace: the
+// pod is parsed from the job's GitLab trace, and usage queries must be filtered
+// by that pod name.
+func TestWebhookTraceResolver(t *testing.T) {
+	app, glMock, promMock := harness(t, "trace")
+
+	payload := fmt.Sprintf(`{
+		"object_kind": "pipeline",
+		"object_attributes": {"id": %d, "status": "success"},
+		"project": {"id": %d},
+		"merge_request": {"iid": %d}
+	}`, pipelineID, projectID, mrIID)
+
+	postWebhook(t, app, payload)
+	waitFor(t, "note created via trace-resolved pod", func() bool {
+		glMock.mu.Lock()
+		defer glMock.mu.Unlock()
+		return len(glMock.notes) == 1
+	})
+
+	if !promMock.sawQuery(podName) {
+		t.Error("usage queries were not filtered by the trace-resolved pod name")
+	}
+	if promMock.sawQuery("kube_pod_labels") {
+		t.Error("trace resolver must not issue kube_pod_labels queries")
 	}
 }
 

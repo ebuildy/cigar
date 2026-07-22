@@ -3,10 +3,11 @@ package gitlab
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 
-	"go.uber.org/zap"
 	gl "gitlab.com/gitlab-org/api/client-go"
+	"go.uber.org/zap"
 )
 
 type apiClient struct {
@@ -21,6 +22,7 @@ func New(baseURL, token string, log *zap.Logger) (Client, error) {
 		return nil, fmt.Errorf("create gitlab client: %w", err)
 	}
 	log.Debug("gitlab client created", zap.String("base_url", baseURL))
+
 	return &apiClient{c: c, log: log}, nil
 }
 
@@ -98,4 +100,18 @@ func (a *apiClient) UpsertNote(ctx context.Context, projectID, mrIID int64, mark
 	}
 	a.log.Debug("created new MR note", zap.Int64("project_id", projectID), zap.Int64("mr_iid", mrIID))
 	return nil
+}
+
+func (a *apiClient) JobTrace(ctx context.Context, projectID, jobID int64) (string, error) {
+	r, _, err := a.c.Jobs.GetTraceFile(projectID, jobID, gl.WithContext(ctx))
+	if err != nil {
+		return "", fmt.Errorf("get trace of job %d: %w", jobID, err)
+	}
+	b, err := io.ReadAll(r)
+	if err != nil {
+		return "", fmt.Errorf("read trace of job %d: %w", jobID, err)
+	}
+	a.log.Debug("fetched job trace",
+		zap.Int64("project_id", projectID), zap.Int64("job_id", jobID), zap.Int("bytes", len(b)))
+	return string(b), nil
 }

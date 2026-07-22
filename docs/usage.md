@@ -21,6 +21,7 @@ startup on missing/invalid required values.
 | `GITLAB_URL` | no | `https://gitlab.com` | GitLab base URL |
 | `GITLAB_TOKEN` | **yes** | — | GitLab API token, `api` scope (create/update MR notes) |
 | `PROMETHEUS_URL` | **yes** | — | Prometheus base URL (cadvisor + kube-state-metrics) |
+| `POD_RESOLVER` | no | `trace` | Pod-correlation strategy: `trace` (parse the job's GitLab trace) or `prometheus` (join `kube_pod_labels{label_job_id}`) |
 | `AUTH_METHODS` | no | `secret` | Ordered, comma-separated webhook auth methods: `secret`, `signature` |
 | `WEBHOOK_SECRET` | when `secret` enabled | — | Legacy shared secret, compared against the `X-Gitlab-Token` header |
 | `WEBHOOK_SIGNING_TOKEN` | when `signature` enabled | — | GitLab signing token (`whsec_…`) used to verify the `webhook-signature` HMAC |

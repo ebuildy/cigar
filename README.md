@@ -76,6 +76,7 @@ Environment variables only (12-factor). The bot fails fast at startup if a requi
 | `WEBHOOK_SIGNING_TOKEN` | ✅ (`serve` only, if `signature` enabled) | — | GitLab signing token (`whsec_...`); verifies the HMAC-SHA256 `webhook-signature` header |
 | `GITLAB_TOKEN` | ✅ | — | Project/group access token, `api` scope, least privilege |
 | `PROMETHEUS_URL` | ✅ | — | Prometheus base URL (cadvisor + kube-state-metrics scraped) |
+| `POD_RESOLVER` | | `trace` | Pod-correlation strategy: `trace` (parse the job's GitLab trace `Running on <pod> via …` line) or `prometheus` (join `kube_pod_labels{label_job_id}`) |
 | `GITLAB_URL` | | `https://gitlab.com` | GitLab instance base URL |
 | `THROTTLE_WARN_RATIO` | | `0.25` | Throttled-periods ratio above which a job gets a ⚠️ warning |
 | `SCRAPE_INTERVAL` | | `30s` | Prometheus scrape interval; query windows are padded by one interval |

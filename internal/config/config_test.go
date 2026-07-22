@@ -58,3 +58,38 @@ func TestLoadAuthFields(t *testing.T) {
 		t.Fatalf("AuthMethods = %v, want %v", got, want)
 	}
 }
+
+func TestLoadPodResolver(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     string
+		want    string
+		wantErr bool
+	}{
+		{name: "default is trace", env: "", want: "trace"},
+		{name: "explicit trace", env: "trace", want: "trace"},
+		{name: "explicit prometheus", env: "prometheus", want: "prometheus"},
+		{name: "unknown value errors", env: "bogus", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("GITLAB_TOKEN", "tok")
+			t.Setenv("PROMETHEUS_URL", "http://prom")
+			t.Setenv("POD_RESOLVER", tt.env)
+
+			cfg, err := Load()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Load() with POD_RESOLVER=%q: want error, got %+v", tt.env, cfg)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.PodResolver != tt.want {
+				t.Fatalf("PodResolver = %q, want %q", cfg.PodResolver, tt.want)
+			}
+		})
+	}
+}
