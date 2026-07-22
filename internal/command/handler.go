@@ -3,9 +3,12 @@ package command
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"go.uber.org/zap"
 
+	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/chart"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/correlate"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/gitlab"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/metrics"
@@ -63,7 +66,107 @@ func (h *Handler) reply(ctx context.Context, ev NoteEvent, body string) error {
 	return nil
 }
 
-// details is implemented in Task 10.
+// details resolves the target against the report's pipeline, queries its series,
+// renders three charts, uploads them and posts one reply.
 func (h *Handler) details(ctx context.Context, ev NoteEvent, pipelineID int64, cmd Command) error {
-	return h.reply(ctx, ev, "details is not implemented yet")
+	pod, start, end, found, err := h.resolveTarget(ctx, ev.ProjectID, pipelineID, cmd)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return h.reply(ctx, ev, fmt.Sprintf("`%s` is not part of pipeline #%d's report.", cmd.Name, pipelineID))
+	}
+	series, err := h.Series.PodSeries(ctx, pod, start, end)
+	if err != nil {
+		return fmt.Errorf("query series for pod %q: %w", pod, err)
+	}
+	if series.Empty() {
+		return h.reply(ctx, ev, fmt.Sprintf("No metrics found for `%s` in the report window.", cmd.Name))
+	}
+
+	charts := []struct {
+		file  string
+		title string
+		lines []chart.Series
+	}{
+		{"cpu.svg", "CPU (cores)", []chart.Series{toChart(series.CPU)}},
+		{"memory.svg", "Memory (bytes)", []chart.Series{toChart(series.Memory)}},
+		{"network.svg", "Network (bytes/s)", []chart.Series{toChart(series.NetRx), toChart(series.NetTx)}},
+	}
+	var body strings.Builder
+	fmt.Fprintf(&body, "### Resource usage for `%s`\n\n", cmd.Name)
+	for _, c := range charts {
+		svg, err := chart.Render(c.title, c.lines)
+		if err != nil {
+			return fmt.Errorf("render %s: %w", c.file, err)
+		}
+		md, err := h.GitLab.UploadFile(ctx, ev.ProjectID, c.file, svg)
+		if err != nil {
+			return fmt.Errorf("upload %s: %w", c.file, err)
+		}
+		body.WriteString(md)
+		body.WriteString("\n\n")
+	}
+	return h.reply(ctx, ev, body.String())
+}
+
+func toChart(l metrics.Line) chart.Series {
+	pts := make([]chart.Point, len(l.Points))
+	for i, p := range l.Points {
+		pts[i] = chart.Point{X: p.T, Y: p.V}
+	}
+	return chart.Series{Label: l.Label, Points: pts}
+}
+
+// resolveTarget validates the target against the pipeline's jobs (the live
+// allowlist) and returns the pod plus its chart window. found is false when the
+// target is not part of the report.
+func (h *Handler) resolveTarget(ctx context.Context, projectID, pipelineID int64, cmd Command) (pod string, start, end time.Time, found bool, err error) {
+	jobs, err := h.GitLab.PipelineJobs(ctx, projectID, pipelineID)
+	if err != nil {
+		return "", time.Time{}, time.Time{}, false, fmt.Errorf("list jobs of pipeline %d: %w", pipelineID, err)
+	}
+	switch cmd.Target {
+	case TargetJob:
+		for _, j := range jobs {
+			if j.Name != cmd.Name {
+				continue
+			}
+			if j.StartedAt.IsZero() || j.FinishedAt.IsZero() {
+				return "", time.Time{}, time.Time{}, false, nil // job never ran
+			}
+			p, ok, err := h.Resolver.PodForJob(ctx, projectID, j.ID, j.StartedAt, j.FinishedAt)
+			if err != nil {
+				return "", time.Time{}, time.Time{}, false, err
+			}
+			if !ok {
+				return "", time.Time{}, time.Time{}, false, nil
+			}
+			return p, j.StartedAt, j.FinishedAt, true, nil
+		}
+		return "", time.Time{}, time.Time{}, false, nil
+	case TargetPod:
+		for _, j := range jobs {
+			if j.StartedAt.IsZero() || j.FinishedAt.IsZero() {
+				continue
+			}
+			p, ok, err := h.Resolver.PodForJob(ctx, projectID, j.ID, j.StartedAt, j.FinishedAt)
+			if err != nil {
+				return "", time.Time{}, time.Time{}, false, err
+			}
+			if !ok || p != cmd.Name {
+				continue
+			}
+			s, e, ok, err := h.Series.PodActiveSpan(ctx, p)
+			if err != nil {
+				return "", time.Time{}, time.Time{}, false, err
+			}
+			if !ok {
+				return p, j.StartedAt, j.FinishedAt, true, nil
+			}
+			return p, s, e, true, nil
+		}
+		return "", time.Time{}, time.Time{}, false, nil
+	}
+	return "", time.Time{}, time.Time{}, false, nil
 }

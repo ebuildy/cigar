@@ -129,3 +129,90 @@ func TestHandleRejectsMRMismatch(t *testing.T) {
 		t.Fatal("acted when the marker's MR did not match the event MR")
 	}
 }
+
+func nonEmptySeries() metrics.PodSeries {
+	base := time.Unix(1752912000, 0)
+	pts := []metrics.Point{{T: base, V: 1}, {T: base.Add(time.Minute), V: 2}}
+	return metrics.PodSeries{
+		CPU:    metrics.Line{Label: "cpu", Points: pts},
+		Memory: metrics.Line{Label: "memory", Points: pts},
+		NetRx:  metrics.Line{Label: "rx", Points: pts},
+		NetTx:  metrics.Line{Label: "tx", Points: pts},
+	}
+}
+
+func TestHandleDetailsJob(t *testing.T) {
+	start := time.Now().Add(-5 * time.Minute)
+	end := time.Now()
+	gl := &fakeGitLab{
+		discussion: signedRoot(42, 3),
+		jobs:       []gitlab.Job{{ID: 1, Name: "build", StartedAt: start, FinishedAt: end}},
+	}
+	se := &fakeSeries{series: nonEmptySeries()}
+	res := &fakeResolver{pods: map[int64]string{1: "runner-abc-project-7-concurrent-0"}}
+	h := newHandler(gl, res, se)
+
+	err := h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "details job build"})
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if gl.uploads != 3 {
+		t.Fatalf("uploads = %d, want 3 (cpu, memory, network)", gl.uploads)
+	}
+	if len(gl.replies) != 1 {
+		t.Fatalf("replies = %d, want 1", len(gl.replies))
+	}
+}
+
+func TestHandleDetailsPodAllowlist(t *testing.T) {
+	start := time.Now().Add(-5 * time.Minute)
+	end := time.Now()
+	pod := "runner-abc-project-7-concurrent-0"
+	gl := &fakeGitLab{
+		discussion: signedRoot(42, 3),
+		jobs:       []gitlab.Job{{ID: 1, Name: "build", StartedAt: start, FinishedAt: end}},
+	}
+	se := &fakeSeries{series: nonEmptySeries(), spanOK: true, spanS: start, spanE: end}
+	res := &fakeResolver{pods: map[int64]string{1: pod}}
+	h := newHandler(gl, res, se)
+
+	if err := h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "details pod " + pod}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if gl.uploads != 3 {
+		t.Fatalf("in-allowlist pod uploads = %d, want 3", gl.uploads)
+	}
+}
+
+func TestHandleDetailsPodNotInReport(t *testing.T) {
+	start := time.Now().Add(-5 * time.Minute)
+	end := time.Now()
+	gl := &fakeGitLab{
+		discussion: signedRoot(42, 3),
+		jobs:       []gitlab.Job{{ID: 1, Name: "build", StartedAt: start, FinishedAt: end}},
+	}
+	se := &fakeSeries{series: nonEmptySeries()}
+	res := &fakeResolver{pods: map[int64]string{1: "runner-real-project-7-concurrent-0"}}
+	h := newHandler(gl, res, se)
+
+	if err := h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "details pod runner-evil-project-99-concurrent-0"}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if gl.uploads != 0 {
+		t.Fatalf("uploads = %d, want 0 for a pod outside the report", gl.uploads)
+	}
+	if len(gl.replies) != 1 {
+		t.Fatalf("replies = %d, want 1 (the refusal notice)", len(gl.replies))
+	}
+}
+
+func TestHandleDetailsUnknownJob(t *testing.T) {
+	gl := &fakeGitLab{discussion: signedRoot(42, 3), jobs: []gitlab.Job{{ID: 1, Name: "build"}}}
+	h := newHandler(gl, &fakeResolver{}, &fakeSeries{series: nonEmptySeries()})
+	if err := h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "details job nope"}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if gl.uploads != 0 || len(gl.replies) != 1 {
+		t.Fatalf("unknown job: uploads=%d replies=%d, want 0 and 1", gl.uploads, len(gl.replies))
+	}
+}
