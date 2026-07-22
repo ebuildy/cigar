@@ -136,6 +136,16 @@ releases:
               [runners.kubernetes]
                 namespace = "gitlab-runner"
                 image = "alpine:3.21"
+                # Let jobs set their own resources via KUBERNETES_CPU_LIMIT /
+                # KUBERNETES_MEMORY_LIMIT (and requests). Needed so the
+                # load-test pipeline's cpu-throttle job can impose a CPU quota
+                # on itself and actually CFS-throttle
+                # (.dev/fixtures/load-test.gitlab-ci.yml). Values are the
+                # per-job ceilings.
+                cpu_limit_overwrite_max_allowed = "2"
+                cpu_request_overwrite_max_allowed = "2"
+                memory_limit_overwrite_max_allowed = "1Gi"
+                memory_request_overwrite_max_allowed = "1Gi"
                 # The runner's own arch auto-detection resolves to
                 # "x86_64-<version>" even when running arm64 (observed on
                 # kind/Apple Silicon) — pin explicitly rather than rely on
@@ -212,6 +222,9 @@ releases:
         config:
           gitlabUrl: http://gitlab.kind.local
           prometheusUrl: http://prometheus-server.monitoring.svc:80
+          # Authenticate webhooks with GitLab signing tokens (HMAC-SHA256).
+          # deploy-cigar.sh sets a matching signing_token on every project hook.
+          authMethods: signature
         secrets:
           existingSecret: cigar-secrets
         # Same reason as gitlab-runner's host_aliases above: gitlab.kind.local

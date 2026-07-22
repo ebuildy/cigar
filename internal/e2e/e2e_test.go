@@ -4,11 +4,15 @@
 package e2e
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -25,13 +29,19 @@ import (
 )
 
 const (
-	secret     = "e2e-secret"
-	projectID  = 7
-	pipelineID = 42
-	mrIID      = 3
-	jobID      = 101
-	podName    = "runner-abc123-project-7-concurrent-0"
+	secret        = "e2e-secret"
+	signingKeyRaw = "e2e-signing-key-0123456789abcdef"
+	projectID     = 7
+	pipelineID    = 42
+	mrIID         = 3
+	jobID         = 101
+	branchRef     = "feature-x"
+	podName       = "runner-abc123-project-7-concurrent-0"
 )
+
+func e2eSigningToken() string {
+	return "whsec_" + base64.StdEncoding.EncodeToString([]byte(signingKeyRaw))
+}
 
 // mockGitLab serves the subset of the GitLab REST API the bot uses and
 // records every note create/update.
@@ -51,6 +61,14 @@ func (m *mockGitLab) server(t *testing.T) *httptest.Server {
 		func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = fmt.Fprintf(w, `[{"id":%d,"name":"build","status":"success","started_at":%q,"finished_at":%q}]`,
 				jobID, started, finished)
+		})
+	mux.HandleFunc(fmt.Sprintf("GET /api/v4/projects/%d/merge_requests", projectID),
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("source_branch") == branchRef && r.URL.Query().Get("state") == "opened" {
+				_, _ = fmt.Fprintf(w, `[{"iid":%d,"state":"opened","source_branch":%q}]`, mrIID, branchRef)
+				return
+			}
+			_, _ = fmt.Fprint(w, `[]`)
 		})
 	mux.HandleFunc(fmt.Sprintf("GET /api/v4/projects/%d/merge_requests/%d/notes", projectID, mrIID),
 		func(w http.ResponseWriter, _ *http.Request) {
@@ -143,7 +161,11 @@ func (m *mockProm) sawQuery(substr string) bool {
 	return false
 }
 
-func TestWebhookToMRNote(t *testing.T) {
+// harness wires the real webhook app + queue + worker + clients against the
+// mock GitLab/Prometheus servers, mirroring `bot serve`. It returns the app to
+// deliver webhooks to plus the two mocks to assert against.
+func harness(t *testing.T) (*fiber.App, *mockGitLab, *mockProm) {
+	t.Helper()
 	glMock := &mockGitLab{}
 	promMock := &mockProm{}
 	glSrv := glMock.server(t)
@@ -170,7 +192,8 @@ func TestWebhookToMRNote(t *testing.T) {
 		Log:               log,
 	}
 
-	// Same queue+worker shape as `bot serve`.
+	// Same queue+worker shape as `bot serve`: merge_request may be absent, in
+	// which case ProcessPipeline resolves the MR from the branch ref.
 	ctx := t.Context()
 	q := make(chan webhook.PipelineEvent, 8)
 	go func() {
@@ -179,14 +202,26 @@ func TestWebhookToMRNote(t *testing.T) {
 			case <-ctx.Done():
 				return
 			case ev := <-q:
-				if err := rep.ProcessPipeline(ctx, ev.Project.ID, ev.ObjectAttributes.ID,
-					ev.MergeRequest.IID, ev.ObjectAttributes.Status); err != nil {
+				var mrIID int64
+				if ev.MergeRequest != nil {
+					mrIID = ev.MergeRequest.IID
+				}
+				if _, err := rep.ProcessPipeline(ctx, ev.Project.ID, ev.ObjectAttributes.ID,
+					mrIID, ev.ObjectAttributes.Ref, ev.ObjectAttributes.Status); err != nil {
 					t.Errorf("process pipeline: %v", err)
 				}
 			}
 		}
 	}()
-	app := webhook.NewApp(secret, chanQueue(q), log)
+	sigAuth, err := webhook.NewSignatureAuth(e2eSigningToken(), webhook.DefaultTimestampTolerance)
+	if err != nil {
+		t.Fatalf("signature auth: %v", err)
+	}
+	return webhook.NewApp([]webhook.Authenticator{sigAuth}, chanQueue(q), log), glMock, promMock
+}
+
+func TestWebhookToMRNote(t *testing.T) {
+	app, glMock, promMock := harness(t)
 
 	payload := fmt.Sprintf(`{
 		"object_kind": "pipeline",
@@ -240,6 +275,33 @@ func TestWebhookToMRNote(t *testing.T) {
 	}
 }
 
+// TestWebhookBranchResolvesMR covers a pipeline whose webhook carries no
+// merge_request (branch pushed before the MR was created): the worker must
+// resolve the open MR from object_attributes.ref and still post the note.
+func TestWebhookBranchResolvesMR(t *testing.T) {
+	app, glMock, _ := harness(t)
+
+	// No "merge_request" field — only the branch ref.
+	payload := fmt.Sprintf(`{
+		"object_kind": "pipeline",
+		"object_attributes": {"id": %d, "status": "success", "ref": %q},
+		"project": {"id": %d}
+	}`, pipelineID, branchRef, projectID)
+
+	postWebhook(t, app, payload)
+	waitFor(t, "note created via branch-resolved MR", func() bool {
+		glMock.mu.Lock()
+		defer glMock.mu.Unlock()
+		return len(glMock.notes) == 1
+	})
+
+	glMock.mu.Lock()
+	defer glMock.mu.Unlock()
+	if !strings.Contains(glMock.notes[0], report.Marker) {
+		t.Errorf("note body missing marker %q:\n%s", report.Marker, glMock.notes[0])
+	}
+}
+
 type chanQueue chan webhook.PipelineEvent
 
 func (q chanQueue) Enqueue(ev webhook.PipelineEvent) bool {
@@ -254,7 +316,13 @@ func (q chanQueue) Enqueue(ev webhook.PipelineEvent) bool {
 func postWebhook(t *testing.T, app *fiber.App, payload string) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(payload))
-	req.Header.Set("X-Gitlab-Token", secret)
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	const msgID = "e2e-msg"
+	mac := hmac.New(sha256.New, []byte(signingKeyRaw))
+	mac.Write([]byte(msgID + "." + ts + "." + payload))
+	req.Header.Set("webhook-id", msgID)
+	req.Header.Set("webhook-timestamp", ts)
+	req.Header.Set("webhook-signature", "v1,"+base64.StdEncoding.EncodeToString(mac.Sum(nil)))
 	req.Header.Set("X-Gitlab-Event", "Pipeline Hook")
 	resp, err := app.Test(req)
 	if err != nil {

@@ -1,0 +1,99 @@
+# Load-test pipeline for exercising cigar's resource report.
+#
+# Three jobs in a single stage so they are scheduled together (with the dev
+# runner's `concurrent: 2` they run two-at-a-time, which is fine — cigar
+# reports per-job over each job's own time window):
+#
+#   1. cpu-throttle : burns CPU against a low CPU limit -> heavy CFS throttling
+#                     (~2 min). Exercises cigar's ⚠️ throttling warning + advice.
+#   2. cpu-modest   : ~100m CPU + a bit of memory (~1 min). The "well-behaved"
+#                     contrast row.
+#   3. network-only : ~no CPU, just hammers the GitLab API in a loop (~2 min).
+#                     Exercises the network RX/TX columns.
+#
+# Pipeline runs ONLY for merge requests (workflow rule below), matching how
+# cigar resolves the MR to comment on.
+#
+# NOTE: for job 1 to actually throttle, the Kubernetes runner must allow the
+# CPU-limit overwrite (*_overwrite_max_allowed in [runners.kubernetes]) — this
+# is set in .dev/helmfile.yaml.gotmpl. Without it KUBERNETES_CPU_LIMIT is
+# ignored, the pod has no CPU quota, and CFS throttling never occurs.
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+stages:
+  - load
+
+default:
+  image: alpine:3.21
+  tags:
+    - kubernetes
+    - dev
+
+# 1. Saturate the CPU while capped at 500m -> the container wants ~4 cores but
+#    is throttled to half a core, so container_cpu_cfs_throttled_periods_total
+#    climbs well past cigar's 25% warn ratio.
+cpu-throttle:
+  stage: load
+  variables:
+    KUBERNETES_CPU_REQUEST: "250m"
+    KUBERNETES_CPU_LIMIT: "500m"
+    KUBERNETES_MEMORY_REQUEST: "128Mi"
+    KUBERNETES_MEMORY_LIMIT: "256Mi"
+  script:
+    - |
+      echo "Burning CPU for 120s, capped at 500m -> expect heavy throttling"
+      for i in 1 2 3 4; do
+        ( while :; do :; done ) &
+      done
+      sleep 120
+      kill $(jobs -p) 2>/dev/null || true
+      echo "done"
+
+# 2. Modest, steady load: request 100m CPU and hold ~200MB of memory, doing
+#    only light work for 60s. Should NOT throttle — the contrast job.
+cpu-modest:
+  stage: load
+  variables:
+    KUBERNETES_CPU_REQUEST: "100m"
+    KUBERNETES_CPU_LIMIT: "250m"
+    KUBERNETES_MEMORY_REQUEST: "256Mi"
+    KUBERNETES_MEMORY_LIMIT: "512Mi"
+  script:
+    - |
+      echo "Allocating ~200MB and doing light work for 60s"
+      block=$(head -c 200000000 /dev/zero | tr '\0' 'x')   # hold ~200MB resident
+      end=$(( $(date +%s) + 60 ))
+      while [ "$(date +%s)" -lt "$end" ]; do
+        sha256sum /etc/os-release >/dev/null
+        sleep 0.2                                          # keep avg CPU ~100m
+      done
+      echo "held ${#block} bytes"
+
+# 3. Network-heavy, CPU-idle: call the GitLab API in a loop for 120s. sleeps
+#    keep CPU near zero so cigar's network RX/TX stands out against tiny CPU.
+network-only:
+  stage: load
+  variables:
+    KUBERNETES_CPU_REQUEST: "50m"
+    KUBERNETES_CPU_LIMIT: "200m"
+    KUBERNETES_MEMORY_REQUEST: "64Mi"
+    KUBERNETES_MEMORY_LIMIT: "128Mi"
+  before_script:
+    - apk add --no-cache curl >/dev/null
+  script:
+    - |
+      echo "Calling the GitLab API in a loop for 120s"
+      end=$(( $(date +%s) + 120 ))
+      n=0
+      while [ "$(date +%s)" -lt "$end" ]; do
+        curl -s -o /dev/null -H "JOB-TOKEN: $CI_JOB_TOKEN" \
+          "$CI_API_V4_URL/projects/$CI_PROJECT_ID/repository/commits?per_page=100"
+        curl -s -o /dev/null -H "JOB-TOKEN: $CI_JOB_TOKEN" \
+          "$CI_API_V4_URL/projects/$CI_PROJECT_ID/pipelines?per_page=100"
+        n=$(( n + 2 ))
+        sleep 0.3                                          # keep CPU idle
+      done
+      echo "made $n API calls"

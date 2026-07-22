@@ -41,11 +41,20 @@ internal/
 - `webhook` must not know about Prometheus or GitLab clients — it enqueues work; a worker processes it. Webhook handler returns `200` fast (GitLab timeout is 10s; metric queries can be slow).
 - Use interfaces at package boundaries (`metrics.Source`, `gitlab.Client`) so tests can stub them.
 
+## Documentation
+
+All project documentation lives under `docs/` — never add stray Markdown docs at
+the repo root. The only permitted root-level docs are `README.md` (repo landing
+page) and this `CLAUDE.md`; everything else (usage guides, design specs,
+implementation plans, runbooks, ADRs) goes in `docs/` (e.g. `docs/usage.md`,
+`docs/superpowers/specs/`, `docs/superpowers/plans/`). When adding a new doc,
+create it in `docs/` and link it from `README.md` if it's user-facing.
+
 ## Key implementation notes
 
 ### Webhook security (non-negotiable)
 
-- Validate `X-Gitlab-Token` header against `WEBHOOK_SECRET` using `subtle.ConstantTimeCompare`. Reject with `401`, no body detail.
+- Authenticate via `AUTH_METHODS` (ordered, comma-separated: `secret`, `signature`; default `secret`). `secret`: constant-time compare of `X-Gitlab-Token` against `WEBHOOK_SECRET` (an empty configured secret never authenticates). `signature`: GitLab signing token — verify the `webhook-signature` HMAC-SHA256 over `{webhook-id}.{webhook-timestamp}.{body}` using `WEBHOOK_SIGNING_TOKEN` (whsec_), rejecting timestamps outside a 5m window (replay protection). Methods are tried in order; the first that authenticates the request wins; none → `401`, no body detail.
 - Only accept `X-Gitlab-Event: Pipeline Hook`; ignore everything else with `200` (so GitLab doesn't disable the hook).
 - Enforce a max request body size (1 MiB via Fiber `BodyLimit` → `413`) and read/write timeouts.
 - Serve HTTPS via ingress/TLS termination; the pod listens plain HTTP on `:8080`, metrics/health on `:8081` (`/healthz`, `/readyz`, `/metrics`).
@@ -78,7 +87,7 @@ GitLab Kubernetes executor pods carry labels/annotations like `job_id`, `project
 
 ### Config (env only, 12-factor)
 
-`WEBHOOK_SECRET`, `GITLAB_URL`, `GITLAB_TOKEN`, `PROMETHEUS_URL`, `THROTTLE_WARN_RATIO` (default `0.25`), `SCRAPE_INTERVAL` (default `30s`), `LISTEN_ADDR`, `LOG_LEVEL`. Fail fast at startup on missing required vars. `WEBHOOK_SECRET` is required by `serve` only — `bot run` works without it.
+`AUTH_METHODS` (default `secret`), `WEBHOOK_SECRET`, `WEBHOOK_SIGNING_TOKEN`, `GITLAB_URL`, `GITLAB_TOKEN`, `PROMETHEUS_URL`, `THROTTLE_WARN_RATIO` (default `0.25`), `SCRAPE_INTERVAL` (default `30s`), `LISTEN_ADDR`, `LOG_LEVEL`. Fail fast at startup on missing required vars. `WEBHOOK_SECRET` is required only when `secret` is an enabled auth method; `WEBHOOK_SIGNING_TOKEN` is required only when `signature` is an enabled auth method. Both are required by `serve` only — `bot run` works without either.
 
 ## Go conventions
 
@@ -110,7 +119,7 @@ CI is GitHub Actions (`.github/workflows/`), running the mise tasks via `jdx/mis
 
 ## Deployment
 
-Helm chart in `deploy/chart/cigar`: Deployment (2 replicas, PDB), Service (http 8080 + ops 8081), Ingress (TLS), NetworkPolicy (ingress limited to the two ports; egress only DNS + GitLab + Prometheus), resources set (practice what we preach), `runAsNonRoot` uid 65532, read-only rootfs, seccomp `RuntimeDefault`, no SA token automount. Env vars map to `config.*` values; `WEBHOOK_SECRET`/`GITLAB_TOKEN` come from `secrets.existingSecret` (or a chart-managed Secret). Image: `ghcr.io/ebuildy/cigar`, tag defaults to `appVersion`. Validate chart changes with `helm lint` + `helm template` (IDE YAML errors on Go template syntax are noise).
+Helm chart in `deploy/chart/cigar`: Deployment (2 replicas, PDB), Service (http 8080 + ops 8081), Ingress (TLS), NetworkPolicy (ingress limited to the two ports; egress only DNS + GitLab + Prometheus), resources set (practice what we preach), `runAsNonRoot` uid 65532, read-only rootfs, seccomp `RuntimeDefault`, no SA token automount. Env vars map to `config.*` values; `WEBHOOK_SECRET`/`WEBHOOK_SIGNING_TOKEN`/`GITLAB_TOKEN` come from `secrets.existingSecret` (or a chart-managed Secret). Image: `ghcr.io/ebuildy/cigar`, tag defaults to `appVersion`. Validate chart changes with `helm lint` + `helm template` (IDE YAML errors on Go template syntax are noise).
 
 ## Definition of done for changes
 

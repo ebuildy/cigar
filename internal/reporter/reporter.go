@@ -24,23 +24,41 @@ type Reporter struct {
 }
 
 // ProcessPipeline builds the report for one pipeline and upserts it as a
-// note on the given MR. This is the whole webhook-worker path; `bot run`
-// uses Build + report.Render directly to print instead of posting.
-func (r *Reporter) ProcessPipeline(ctx context.Context, projectID, pipelineID, mrIID int64, status string) error {
+// note on the MR. When mrIID is 0 (the webhook had no merge_request yet,
+// e.g. the branch was pushed before the MR was created) it resolves the
+// open MR from the branch ref; if none exists it returns posted=false and
+// does nothing. This is the whole webhook-worker path; `bot run` uses
+// Build + report.Render directly to print instead of posting.
+func (r *Reporter) ProcessPipeline(ctx context.Context, projectID, pipelineID, mrIID int64, ref, status string) (bool, error) {
+	if mrIID == 0 {
+		// The webhook carried no merge_request (branch pushed before the MR
+		// was created). Resolve an open MR from the pipeline's branch ref.
+		iid, ok, err := r.GitLab.MergeRequestForBranch(ctx, projectID, ref)
+		if err != nil {
+			return false, fmt.Errorf("resolve MR for branch %q: %w", ref, err)
+		}
+		if !ok {
+			r.Log.Info("no open merge request for branch yet, skipping",
+				"project_id", projectID, "branch", ref, "pipeline_id", pipelineID)
+			return false, nil
+		}
+		mrIID = iid
+	}
+
 	data, err := r.Build(ctx, projectID, pipelineID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	data.Status = status
 
 	body, err := report.Render(data)
 	if err != nil {
-		return fmt.Errorf("render report: %w", err)
+		return false, fmt.Errorf("render report: %w", err)
 	}
 	if err := r.GitLab.UpsertNote(ctx, projectID, mrIID, report.Marker, body); err != nil {
-		return fmt.Errorf("upsert note on MR !%d: %w", mrIID, err)
+		return false, fmt.Errorf("upsert note on MR !%d: %w", mrIID, err)
 	}
-	return nil
+	return true, nil
 }
 
 // Build assembles the report data for one pipeline. Per-job failures
@@ -55,6 +73,7 @@ func (r *Reporter) Build(ctx context.Context, projectID, pipelineID int64) (repo
 	data := report.Data{PipelineID: pipelineID, ThrottleWarnRatio: r.ThrottleWarnRatio}
 	for _, job := range jobs {
 		data.Jobs = append(data.Jobs, report.JobReport{
+			Stage: job.Stage,
 			Name:  job.Name,
 			Usage: r.jobUsage(ctx, projectID, job),
 		})

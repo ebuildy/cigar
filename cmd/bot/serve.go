@@ -47,9 +47,6 @@ func serve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if cfg.WebhookSecret == "" {
-		return errors.New("missing required environment variable WEBHOOK_SECRET")
-	}
 	log, err := newLogger(cfg)
 	if err != nil {
 		return err
@@ -62,7 +59,11 @@ func serve(ctx context.Context) error {
 	q := make(queue, 128)
 	go worker(ctx, q, rep, log)
 
-	app := webhook.NewApp(cfg.WebhookSecret, q, log)
+	auths, err := buildAuthenticators(cfg)
+	if err != nil {
+		return err
+	}
+	app := webhook.NewApp(auths, q, log)
 
 	ops := fiber.New(fiber.Config{ReadTimeout: 5 * time.Second})
 	ops.Get("/healthz", func(c fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
@@ -111,13 +112,54 @@ func process(ctx context.Context, rep *reporter.Reporter, ev webhook.PipelineEve
 	ctx, cancel := context.WithTimeout(ctx, processTimeout)
 	defer cancel()
 
-	// The handler only enqueues events with a merge request attached.
-	mrIID := ev.MergeRequest.IID
-	log = log.With("pipeline_id", ev.ObjectAttributes.ID, "project_id", ev.Project.ID, "mr_iid", mrIID)
+	// merge_request may be absent (branch pushed before the MR was created);
+	// ProcessPipeline resolves the MR from the pipeline's branch ref.
+	var mrIID int64
+	if ev.MergeRequest != nil {
+		mrIID = ev.MergeRequest.IID
+	}
+	ref := ev.ObjectAttributes.Ref
+	log = log.With("pipeline_id", ev.ObjectAttributes.ID, "project_id", ev.Project.ID, "mr_iid", mrIID, "ref", ref)
 
-	if err := rep.ProcessPipeline(ctx, ev.Project.ID, ev.ObjectAttributes.ID, mrIID, ev.ObjectAttributes.Status); err != nil {
+	posted, err := rep.ProcessPipeline(ctx, ev.Project.ID, ev.ObjectAttributes.ID, mrIID, ref, ev.ObjectAttributes.Status)
+	if err != nil {
 		log.Error("process pipeline failed", "err", err)
 		return
 	}
+	if !posted {
+		log.Info("no open merge request for pipeline yet, nothing posted")
+		return
+	}
 	log.Info("report posted")
+}
+
+// buildAuthenticators turns the ordered cfg.AuthMethods into webhook
+// authenticators, failing fast when an enabled method's credential is absent
+// or malformed, or when no method is configured at all.
+func buildAuthenticators(cfg *config.Config) ([]webhook.Authenticator, error) {
+	var auths []webhook.Authenticator
+	for _, m := range cfg.AuthMethods {
+		switch m {
+		case "secret":
+			if cfg.WebhookSecret == "" {
+				return nil, errors.New(`AUTH_METHODS includes "secret" but WEBHOOK_SECRET is not set`)
+			}
+			auths = append(auths, webhook.NewSecretAuth(cfg.WebhookSecret))
+		case "signature":
+			if cfg.WebhookSigningToken == "" {
+				return nil, errors.New(`AUTH_METHODS includes "signature" but WEBHOOK_SIGNING_TOKEN is not set`)
+			}
+			a, err := webhook.NewSignatureAuth(cfg.WebhookSigningToken, webhook.DefaultTimestampTolerance)
+			if err != nil {
+				return nil, fmt.Errorf("signature auth: %w", err)
+			}
+			auths = append(auths, a)
+		default:
+			return nil, fmt.Errorf("unknown auth method %q", m)
+		}
+	}
+	if len(auths) == 0 {
+		return nil, errors.New("no authentication method configured")
+	}
+	return auths, nil
 }

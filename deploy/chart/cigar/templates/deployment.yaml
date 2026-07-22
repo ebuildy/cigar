@@ -50,11 +50,24 @@ spec:
               containerPort: {{ .Values.service.opsPort }}
               protocol: TCP
           env:
+            {{- if or (not .Values.config.authMethods) (contains "secret" (.Values.config.authMethods | default "")) }}
             - name: WEBHOOK_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.secrets.existingSecret | default (include "cigar.fullname" .) }}
                   key: WEBHOOK_SECRET
+            {{- end }}
+            {{- if .Values.config.authMethods }}
+            - name: AUTH_METHODS
+              value: {{ .Values.config.authMethods | quote }}
+            {{- end }}
+            {{- if contains "signature" (.Values.config.authMethods | default "") }}
+            - name: WEBHOOK_SIGNING_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret | default (include "cigar.fullname" .) }}
+                  key: WEBHOOK_SIGNING_TOKEN
+            {{- end }}
             - name: GITLAB_TOKEN
               valueFrom:
                 secretKeyRef:
