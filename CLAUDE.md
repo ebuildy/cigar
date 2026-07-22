@@ -87,7 +87,7 @@ GitLab Kubernetes executor pods carry labels/annotations like `job_id`, `project
 
 ### Config (env only, 12-factor)
 
-`AUTH_METHODS` (default `secret`), `WEBHOOK_SECRET`, `WEBHOOK_SIGNING_TOKEN`, `GITLAB_URL`, `GITLAB_TOKEN`, `PROMETHEUS_URL`, `THROTTLE_WARN_RATIO` (default `0.25`), `SCRAPE_INTERVAL` (default `30s`), `LISTEN_ADDR`, `LOG_LEVEL` (default `info`; also settable via the `--log-level` root flag, which takes precedence). Fail fast at startup on missing required vars. `WEBHOOK_SECRET` is required only when `secret` is an enabled auth method; `WEBHOOK_SIGNING_TOKEN` is required only when `signature` is an enabled auth method. Both are required by `serve` only — `bot run` works without either.
+`AUTH_METHODS` (default `secret`), `WEBHOOK_SECRET`, `WEBHOOK_SIGNING_TOKEN`, `GITLAB_URL`, `GITLAB_TOKEN`, `PROMETHEUS_URL`, `POD_RESOLVER` (default `trace`; `trace` parses the job's GitLab trace for the `Running on <pod> via …` line, `prometheus` joins `kube_pod_labels{label_job_id}`), `THROTTLE_WARN_RATIO` (default `0.25`), `SCRAPE_INTERVAL` (default `30s`), `LISTEN_ADDR`, `LOG_LEVEL` (default `info`; also settable via the `--log-level` root flag, which takes precedence). Fail fast at startup on missing required vars. `WEBHOOK_SECRET` is required only when `secret` is an enabled auth method; `WEBHOOK_SIGNING_TOKEN` is required only when `signature` is an enabled auth method. Both are required by `serve` only — `bot run` works without either.
 
 ## Go conventions
 
