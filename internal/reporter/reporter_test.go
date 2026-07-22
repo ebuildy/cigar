@@ -3,6 +3,7 @@ package reporter
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/gitlab"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/metrics"
+	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/report"
 )
 
 type fakeGitLab struct {
@@ -18,8 +20,10 @@ type fakeGitLab struct {
 
 	branchMR map[string]int64 // source branch -> open MR IID
 
-	upsertedMR int64 // MR IID of the last UpsertNote call
-	upserts    int
+	upsertedMR   int64 // MR IID of the last UpsertNote call
+	upsertMarker string
+	upsertBody   string
+	upserts      int
 }
 
 func (f *fakeGitLab) PipelineJobs(context.Context, int64, int64) ([]gitlab.Job, error) {
@@ -31,14 +35,26 @@ func (f *fakeGitLab) MergeRequestForBranch(_ context.Context, _ int64, branch st
 	return iid, ok, nil
 }
 
-func (f *fakeGitLab) UpsertNote(_ context.Context, _, mrIID int64, _, _ string) error {
+func (f *fakeGitLab) UpsertNote(_ context.Context, _, mrIID int64, marker, body string) error {
 	f.upsertedMR = mrIID
+	f.upsertMarker = marker
+	f.upsertBody = body
 	f.upserts++
 	return nil
 }
 
 func (f *fakeGitLab) JobTrace(_ context.Context, _, _ int64) (string, error) {
 	return "", nil
+}
+
+// New Client methods (unused by the reporter path; stubbed for the interface).
+func (f *fakeGitLab) CurrentUser(context.Context) (int64, error) { return 0, nil }
+func (f *fakeGitLab) MergeRequestDiscussion(context.Context, int64, int64, string) (gitlab.Discussion, error) {
+	return gitlab.Discussion{}, nil
+}
+func (f *fakeGitLab) UploadFile(context.Context, int64, string, []byte) (string, error) { return "", nil }
+func (f *fakeGitLab) CreateDiscussionReply(context.Context, int64, int64, string, string) error {
+	return nil
 }
 
 type fakeResolver struct {
@@ -122,6 +138,39 @@ func TestProcessPipeline(t *testing.T) {
 				t.Fatalf("upserts = %d, want 0 (nothing to post)", gl.upserts)
 			}
 		})
+	}
+}
+
+func TestProcessPipelineSignsNote(t *testing.T) {
+	gl := &fakeGitLab{jobs: []gitlab.Job{{ID: 1, Stage: "build", Name: "compile"}}}
+	r := &Reporter{
+		GitLab:     gl,
+		Resolver:   &fakeResolver{},
+		Metrics:    &fakeSource{},
+		SigningKey: []byte("k"),
+		Log:        zap.NewNop(),
+	}
+	posted, err := r.ProcessPipeline(context.Background(), 7, 42, 3, "feature-x", "success")
+	if err != nil || !posted {
+		t.Fatalf("ProcessPipeline posted=%v err=%v", posted, err)
+	}
+	if gl.upsertMarker != report.MarkerPrefix {
+		t.Fatalf("upsert lookup marker = %q, want MarkerPrefix %q", gl.upsertMarker, report.MarkerPrefix)
+	}
+	pid, mr, ok := report.ParseSignedMarker(gl.upsertBody, []byte("k"))
+	if !ok || pid != 42 || mr != 3 {
+		t.Fatalf("body signed marker = (%d,%d,%v), want (42,3,true)", pid, mr, ok)
+	}
+}
+
+func TestProcessPipelineNoKeyPlainMarker(t *testing.T) {
+	gl := &fakeGitLab{jobs: []gitlab.Job{{ID: 1, Name: "compile"}}}
+	r := &Reporter{GitLab: gl, Resolver: &fakeResolver{}, Metrics: &fakeSource{}, Log: zap.NewNop()}
+	if _, err := r.ProcessPipeline(context.Background(), 7, 42, 3, "feature-x", "success"); err != nil {
+		t.Fatalf("ProcessPipeline: %v", err)
+	}
+	if !strings.Contains(gl.upsertBody, report.Marker) {
+		t.Fatalf("body missing plain Marker without a signing key:\n%s", gl.upsertBody)
 	}
 }
 
