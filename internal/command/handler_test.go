@@ -145,7 +145,6 @@ func nonEmptySeries() metrics.PodSeries {
 	return metrics.PodSeries{
 		CPU:    metrics.Line{Label: "cpu", Points: pts},
 		Memory: metrics.Line{Label: "memory", Points: pts},
-		NetRx:  metrics.Line{Label: "rx", Points: pts},
 		NetTx:  metrics.Line{Label: "tx", Points: pts},
 	}
 }

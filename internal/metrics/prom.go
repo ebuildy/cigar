@@ -131,7 +131,6 @@ func (s *PromSource) PodSeries(ctx context.Context, pod string, start, end time.
 	}{
 		{fmt.Sprintf(`sum(rate(container_cpu_usage_seconds_total{%s}[%s]))`, csel, rng), &out.CPU, "cpu"},
 		{fmt.Sprintf(`sum(container_memory_working_set_bytes{%s})`, csel), &out.Memory, "memory"},
-		{fmt.Sprintf(`sum(rate(container_network_receive_bytes_total{%s}[%s]))`, psel, rng), &out.NetRx, "rx"},
 		{fmt.Sprintf(`sum(rate(container_network_transmit_bytes_total{%s}[%s]))`, psel, rng), &out.NetTx, "tx"},
 	} {
 		pts, err := s.rangePoints(ctx, q.query, start, end, step)

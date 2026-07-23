@@ -17,18 +17,19 @@ type Line struct {
 	Points []Point
 }
 
-// PodSeries holds the time series backing the three `details` charts.
+// PodSeries holds the time series backing the three `details` charts. Only the
+// transmit side of the network is charted — a CI runner's receive traffic
+// (image/dependency pulls) is rarely the interesting signal.
 type PodSeries struct {
 	CPU    Line // cores
 	Memory Line // bytes (working set)
-	NetRx  Line // bytes/s
-	NetTx  Line // bytes/s
+	NetTx  Line // bytes/s (transmit)
 }
 
 // Empty reports whether no series produced any sample (absent ≠ zero).
 func (s PodSeries) Empty() bool {
 	return len(s.CPU.Points) == 0 && len(s.Memory.Points) == 0 &&
-		len(s.NetRx.Points) == 0 && len(s.NetTx.Points) == 0
+		len(s.NetTx.Points) == 0
 }
 
 // SeriesSource is the range-query capability consumed by the command handler;

@@ -101,7 +101,7 @@ func (h *Handler) details(ctx context.Context, ev NoteEvent, pipelineID int64, c
 	}{
 		{"cpu", "CPU (cores)", chart.UnitCores, []chart.Series{toChart(series.CPU)}},
 		{"memory", "Memory (bytes)", chart.UnitBytes, []chart.Series{toChart(series.Memory)}},
-		{"network", "Network (bytes/s)", chart.UnitBytesPerSec, []chart.Series{toChart(series.NetRx), toChart(series.NetTx)}},
+		{"network", "Network TX (bytes/s)", chart.UnitBytesPerSec, []chart.Series{toChart(series.NetTx)}},
 	}
 	var body strings.Builder
 	fmt.Fprintf(&body, "### Resource usage for `%s`\n\n", cmd.Name)

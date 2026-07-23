@@ -144,7 +144,7 @@ func printJobDetails(cmd *cobra.Command, rep *reporter.Reporter, cfg *config.Con
 	}{
 		{"CPU (cores)", chart.UnitCores, []chart.Series{lineToSeries(series.CPU)}},
 		{"Memory (bytes)", chart.UnitBytes, []chart.Series{lineToSeries(series.Memory)}},
-		{"Network (bytes/s)", chart.UnitBytesPerSec, []chart.Series{lineToSeries(series.NetRx), lineToSeries(series.NetTx)}},
+		{"Network TX (bytes/s)", chart.UnitBytesPerSec, []chart.Series{lineToSeries(series.NetTx)}},
 	} {
 		md, err := chart.Render(chart.Markdown, c.title, c.unit, c.lines)
 		if err != nil {
