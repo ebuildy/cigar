@@ -19,6 +19,9 @@ func TestDetectBuildTool(t *testing.T) {
 		{name: "gradle wrapper", trace: "$ ./gradlew build --stacktrace", want: "Gradle", wants: true},
 		{name: "gradle daemon", trace: "Starting a Gradle Daemon, 1 incompatible", want: "Gradle", wants: true},
 		{name: "plain java", trace: "$ java -jar app.jar", want: "Java", wants: true},
+		{name: "maven wrapper", trace: "$ ./mvnw -B verify", want: "Maven", wants: true},
+		{name: "ansi-coloured maven", trace: "\x1b[32m$ mvn\x1b[0m -T 1C verify", want: "Maven", wants: true},
+		{name: "ansi between java and flag", trace: "$ java\x1b[0m -jar app.jar", want: "Java", wants: true},
 		{name: "no java", trace: "$ npm ci\n$ npm test", wants: false},
 		{name: "empty trace", trace: "", wants: false},
 	}
@@ -71,7 +74,6 @@ func TestJavaThreadsFires(t *testing.T) {
 	for _, want := range []string{
 		"Maven",
 		"mvn -T 2",
-		"--max-workers=2",
 		"-XX:ActiveProcessorCount=2",
 		"cwiki.apache.org",
 		"docs.gradle.org",
@@ -80,6 +82,34 @@ func TestJavaThreadsFires(t *testing.T) {
 		if !strings.Contains(a.Body, want) {
 			t.Errorf("body missing %q:\n%s", want, a.Body)
 		}
+	}
+}
+
+func TestJavaThreadsAdvisesOnlyTheDetectedTool(t *testing.T) {
+	th := Thresholds{ThrottleWarnRatio: 0.25}
+	base := metrics.JobUsage{ThrottledRatio: 0.8, CPULimitCores: 2}
+	rule := javaThreads{}
+
+	gradle := rule.Check(Facts{Name: "build", Usage: &base, Trace: "$ ./gradlew build"}, th)
+	if len(gradle) != 1 {
+		t.Fatalf("gradle trace: %d advice, want 1", len(gradle))
+	}
+	if strings.Contains(gradle[0].Body, "mvn -T") {
+		t.Errorf("gradle build advised to tune Maven:\n%s", gradle[0].Body)
+	}
+	if !strings.Contains(gradle[0].Body, "--max-workers=2") {
+		t.Errorf("gradle build not advised about --max-workers:\n%s", gradle[0].Body)
+	}
+
+	plain := rule.Check(Facts{Name: "build", Usage: &base, Trace: "$ java -jar app.jar"}, th)
+	if len(plain) != 1 {
+		t.Fatalf("plain java trace: %d advice, want 1", len(plain))
+	}
+	if strings.Contains(plain[0].Body, "mvn -T") || strings.Contains(plain[0].Body, "gradlew") {
+		t.Errorf("plain JVM run advised to tune Maven/Gradle:\n%s", plain[0].Body)
+	}
+	if !strings.Contains(plain[0].Body, "-XX:ActiveProcessorCount=2") {
+		t.Errorf("plain JVM run missing the ActiveProcessorCount advice:\n%s", plain[0].Body)
 	}
 }
 

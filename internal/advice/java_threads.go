@@ -36,13 +36,29 @@ func (javaThreads) Check(f Facts, t Thresholds) []Advice {
 		"With requests only, a JVM on a 64-core node builds 64-wide thread pools inside a "+
 		"one-core slice — which is exactly what shows up as CFS throttling.\n\n", tool)
 	fmt.Fprintf(&b, "Cap the parallelism to the CPU the pod actually gets (%d):\n\n", n)
-	b.WriteString("```sh\n")
-	fmt.Fprintf(&b, "mvn -T %d verify                 # an explicit count, not -T 1C\n", n)
-	fmt.Fprintf(&b, "./gradlew build --max-workers=%d  # or org.gradle.workers.max=%d in gradle.properties\n", n, n)
-	b.WriteString("```\n\n")
-	fmt.Fprintf(&b, "If tests fork JVMs, cap Surefire's `forkCount` too, and pin the JVM's view of the "+
-		"machine with `JAVA_TOOL_OPTIONS=-XX:ActiveProcessorCount=%d`. Never set "+
-		"`-XX:-UseContainerSupport` — that disables container awareness entirely.\n\n", n)
+	switch tool {
+	case "Maven":
+		b.WriteString("```sh\n")
+		fmt.Fprintf(&b, "mvn -T %d verify   # an explicit count, not -T 1C\n", n)
+		b.WriteString("```\n\n")
+		fmt.Fprintf(&b, "If tests fork JVMs, cap Surefire's `forkCount` too, and pin the JVM's view of "+
+			"the machine with `JAVA_TOOL_OPTIONS=-XX:ActiveProcessorCount=%d`. Never set "+
+			"`-XX:-UseContainerSupport` — that disables container awareness entirely.\n\n", n)
+	case "Gradle":
+		b.WriteString("```sh\n")
+		fmt.Fprintf(&b, "./gradlew build --max-workers=%d   # or org.gradle.workers.max=%d in gradle.properties\n", n, n)
+		b.WriteString("```\n\n")
+		fmt.Fprintf(&b, "Pin the JVM's view of the machine too, with "+
+			"`JAVA_TOOL_OPTIONS=-XX:ActiveProcessorCount=%d`. Never set "+
+			"`-XX:-UseContainerSupport` — that disables container awareness entirely.\n\n", n)
+	default: // a JVM process, but no build tool identified
+		b.WriteString("```sh\n")
+		fmt.Fprintf(&b, "export JAVA_TOOL_OPTIONS=-XX:ActiveProcessorCount=%d\n", n)
+		b.WriteString("```\n\n")
+		b.WriteString("That pins `Runtime.availableProcessors()`, which sizes ForkJoinPool and most " +
+			"library thread pools. Never set `-XX:-UseContainerSupport` — that disables container " +
+			"awareness entirely.\n\n")
+	}
 	b.WriteString("- <https://cwiki.apache.org/confluence/display/MAVEN/Parallel+builds+in+Maven+3>\n")
 	b.WriteString("- <https://docs.gradle.org/current/userguide/command_line_interface.html>\n")
 	b.WriteString("- <https://kestra.io/docs/administrator-guide/jvm-cpu-limits>\n")
@@ -62,16 +78,26 @@ var buildTools = []struct {
 	name string
 	re   *regexp.Regexp
 }{
-	{"Maven", regexp.MustCompile(`(?i)\bmvn\b|\[INFO\] Scanning for projects|maven-\w+-plugin`)},
+	{"Maven", regexp.MustCompile(`(?i)\bmvnw?\b|\[INFO\] Scanning for projects|maven-\w+-plugin`)},
 	{"Gradle", regexp.MustCompile(`(?i)\bgradlew?\b|Welcome to Gradle|Starting a Gradle Daemon`)},
+	// openjdk alone can match an incidental mention (e.g. a `FROM openjdk:17`
+	// line in an unrelated job), which is why the generic branch below only
+	// ever advises ActiveProcessorCount and never build-tool-specific flags.
 	{"Java", regexp.MustCompile(`(?i)\bjava\s+-|openjdk`)},
 }
+
+// ansiRE matches ANSI CSI escapes. GitLab traces are colourized, and a colour
+// code landing mid-token defeats the adjacency in the patterns below. This
+// duplicates a regex in internal/correlate on purpose: advice is a pure
+// package and importing correlate just for this would pull in its API deps.
+var ansiRE = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 
 // detectBuildTool reports which Java build tool the trace shows, if any.
 func detectBuildTool(trace string) (string, bool) {
 	if trace == "" {
 		return "", false
 	}
+	trace = ansiRE.ReplaceAllString(trace, "")
 	for _, bt := range buildTools {
 		if bt.re.MatchString(trace) {
 			return bt.name, true
