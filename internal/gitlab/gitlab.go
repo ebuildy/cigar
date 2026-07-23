@@ -1,6 +1,7 @@
 package gitlab
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -114,4 +115,41 @@ func (a *apiClient) JobTrace(ctx context.Context, projectID, jobID int64) (strin
 	a.log.Debug("fetched job trace",
 		zap.Int64("project_id", projectID), zap.Int64("job_id", jobID), zap.Int("bytes", len(b)))
 	return string(b), nil
+}
+
+func (a *apiClient) CurrentUser(ctx context.Context) (int64, error) {
+	u, _, err := a.c.Users.CurrentUser(gl.WithContext(ctx))
+	if err != nil {
+		return 0, fmt.Errorf("get current user: %w", err)
+	}
+	return u.ID, nil
+}
+
+func (a *apiClient) MergeRequestDiscussion(ctx context.Context, projectID, mrIID int64, discussionID string) (Discussion, error) {
+	d, _, err := a.c.Discussions.GetMergeRequestDiscussion(projectID, mrIID, discussionID, gl.WithContext(ctx))
+	if err != nil {
+		return Discussion{}, fmt.Errorf("get discussion %s on MR !%d: %w", discussionID, mrIID, err)
+	}
+	if len(d.Notes) == 0 {
+		return Discussion{}, fmt.Errorf("discussion %s has no notes", discussionID)
+	}
+	root := d.Notes[0]
+	return Discussion{RootNoteAuthorID: root.Author.ID, RootNoteBody: root.Body}, nil
+}
+
+func (a *apiClient) UploadFile(ctx context.Context, projectID int64, filename string, content []byte) (string, error) {
+	f, _, err := a.c.ProjectMarkdownUploads.UploadProjectMarkdown(projectID, bytes.NewReader(content), filename, gl.WithContext(ctx))
+	if err != nil {
+		return "", fmt.Errorf("upload %q to project %d: %w", filename, projectID, err)
+	}
+	return f.Markdown, nil
+}
+
+func (a *apiClient) CreateDiscussionReply(ctx context.Context, projectID, mrIID int64, discussionID, body string) error {
+	_, _, err := a.c.Discussions.AddMergeRequestDiscussionNote(projectID, mrIID, discussionID,
+		&gl.AddMergeRequestDiscussionNoteOptions{Body: gl.Ptr(body)}, gl.WithContext(ctx))
+	if err != nil {
+		return fmt.Errorf("reply in discussion %s on MR !%d: %w", discussionID, mrIID, err)
+	}
+	return nil
 }

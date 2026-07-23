@@ -22,6 +22,10 @@ type Reporter struct {
 	Metrics           metrics.Source
 	ThrottleWarnRatio float64
 	Log               *zap.Logger
+
+	// SigningKey signs the note marker so command replies can trust the report's
+	// pipeline/MR. Empty for `bot run` (no commands).
+	SigningKey []byte
 }
 
 // ProcessPipeline builds the report for one pipeline and upserts it as a
@@ -53,12 +57,15 @@ func (r *Reporter) ProcessPipeline(ctx context.Context, projectID, pipelineID, m
 		return false, err
 	}
 	data.Status = status
+	if len(r.SigningKey) > 0 {
+		data.NoteMarker = report.SignedMarker(pipelineID, mrIID, r.SigningKey)
+	}
 
 	body, err := report.Render(data)
 	if err != nil {
 		return false, fmt.Errorf("render report: %w", err)
 	}
-	if err := r.GitLab.UpsertNote(ctx, projectID, mrIID, report.Marker, body); err != nil {
+	if err := r.GitLab.UpsertNote(ctx, projectID, mrIID, report.MarkerPrefix, body); err != nil {
 		return false, fmt.Errorf("upsert note on MR !%d: %w", mrIID, err)
 	}
 	r.Log.Info("upserted resource report note",

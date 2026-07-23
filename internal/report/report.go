@@ -37,6 +37,11 @@ type Data struct {
 	// correlate — Render emits a "no resource data" error notice instead of an
 	// empty report of zeros.
 	RanJobs int
+
+	// NoteMarker, when non-empty, is written at the top of the body instead of
+	// the plain Marker. serve sets it to a SignedMarker; `bot run` leaves it
+	// empty (no signing key, no commands).
+	NoteMarker string
 }
 
 // hasUsage reports whether any job produced resource-usage data.
@@ -78,7 +83,11 @@ func (d Data) totals() totals {
 // Render produces the markdown body of the MR note, starting with Marker.
 func Render(d Data) (string, error) {
 	var b strings.Builder
-	b.WriteString(Marker)
+	marker := Marker
+	if d.NoteMarker != "" {
+		marker = d.NoteMarker
+	}
+	b.WriteString(marker)
 	b.WriteString("\n\n")
 
 	fmt.Fprintf(&b, "## Pipeline #%d resource report — %s\n\n", d.PipelineID, d.Status)

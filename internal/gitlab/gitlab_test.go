@@ -2,6 +2,7 @@ package gitlab
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -69,5 +70,52 @@ func TestMergeRequestForBranch(t *testing.T) {
 				t.Errorf("ok = %v, want %v", ok, tt.wantOK)
 			}
 		})
+	}
+}
+
+func TestNewClientMethods(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v4/user", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"id":555,"username":"cigar-bot"}`)
+	})
+	mux.HandleFunc("GET /api/v4/projects/7/merge_requests/3/discussions/abc",
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = fmt.Fprint(w, `{"id":"abc","notes":[{"id":1,"body":"report body","author":{"id":555}}]}`)
+		})
+	mux.HandleFunc("POST /api/v4/projects/7/uploads", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = fmt.Fprint(w, `{"markdown":"![cpu.svg](/uploads/deadbeef/cpu.svg)","url":"/uploads/deadbeef/cpu.svg"}`)
+	})
+	mux.HandleFunc("POST /api/v4/projects/7/merge_requests/3/discussions/abc/notes",
+		func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprint(w, `{"id":2}`)
+		})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c, err := New(srv.URL, "tok", zap.NewNop())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+
+	uid, err := c.CurrentUser(ctx)
+	if err != nil || uid != 555 {
+		t.Fatalf("CurrentUser = (%d,%v), want (555,nil)", uid, err)
+	}
+	d, err := c.MergeRequestDiscussion(ctx, 7, 3, "abc")
+	if err != nil {
+		t.Fatalf("MergeRequestDiscussion: %v", err)
+	}
+	if d.RootNoteAuthorID != 555 || d.RootNoteBody != "report body" {
+		t.Fatalf("discussion root = (%d,%q), want (555,'report body')", d.RootNoteAuthorID, d.RootNoteBody)
+	}
+	md, err := c.UploadFile(ctx, 7, "cpu.svg", []byte("<svg/>"))
+	if err != nil || md == "" {
+		t.Fatalf("UploadFile = (%q,%v)", md, err)
+	}
+	if err := c.CreateDiscussionReply(ctx, 7, 3, "abc", "hi"); err != nil {
+		t.Fatalf("CreateDiscussionReply: %v", err)
 	}
 }

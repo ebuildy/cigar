@@ -11,25 +11,24 @@ import (
 	"go.uber.org/zap"
 )
 
-// NewPromSource returns the Prometheus-backed Source (cadvisor +
-// kube-state-metrics queries). Windows are padded by one scrapeInterval so
-// short jobs still cover at least one sample.
-func NewPromSource(promURL string, scrapeInterval time.Duration, log *zap.Logger) (Source, error) {
+// NewPromSource returns the Prometheus-backed source. It satisfies both Source
+// (aggregation) and SeriesSource (range queries).
+func NewPromSource(promURL string, scrapeInterval time.Duration, log *zap.Logger) (*PromSource, error) {
 	c, err := api.NewClient(api.Config{Address: promURL})
 	if err != nil {
 		return nil, fmt.Errorf("create prometheus client: %w", err)
 	}
 	log.Debug("prometheus metrics source created", zap.String("url", promURL))
-	return &promSource{api: promv1.NewAPI(c), scrape: scrapeInterval, log: log}, nil
+	return &PromSource{api: promv1.NewAPI(c), scrape: scrapeInterval, log: log}, nil
 }
 
-type promSource struct {
+type PromSource struct {
 	api    promv1.API
 	scrape time.Duration
 	log    *zap.Logger
 }
 
-func (s *promSource) PodUsage(ctx context.Context, pod string, start, end time.Time) (*JobUsage, error) {
+func (s *PromSource) PodUsage(ctx context.Context, pod string, start, end time.Time) (*JobUsage, error) {
 	dur := end.Sub(start)
 	if dur <= 0 {
 		return nil, fmt.Errorf("invalid job window %s..%s", start, end)
@@ -97,7 +96,7 @@ func (s *promSource) PodUsage(ctx context.Context, pod string, start, end time.T
 
 // scalar runs an instant query expected to yield at most one sample.
 // ok is false when the query matched no series (metric absent ≠ zero).
-func (s *promSource) scalar(ctx context.Context, query string, ts time.Time) (float64, bool, error) {
+func (s *PromSource) scalar(ctx context.Context, query string, ts time.Time) (float64, bool, error) {
 	val, _, err := s.api.Query(ctx, query, ts)
 	if err != nil {
 		return 0, false, fmt.Errorf("prometheus query %q: %w", query, err)
@@ -111,4 +110,92 @@ func (s *promSource) scalar(ctx context.Context, query string, ts time.Time) (fl
 		return 0, false, nil
 	}
 	return float64(vec[0].Value), true, nil
+}
+
+// activeSpanLookback bounds how far back PodActiveSpan looks for a pod's series.
+const activeSpanLookback = 6 * time.Hour
+
+// PodSeries returns aligned CPU/memory/network series over [start,end] via
+// query_range. Absent series yield empty lines (never fabricated as zero).
+func (s *PromSource) PodSeries(ctx context.Context, pod string, start, end time.Time) (PodSeries, error) {
+	step := seriesStep(end.Sub(start))
+	rng := rangeVector(step, s.scrape)
+	csel := fmt.Sprintf(`pod=%q,container!="",container!="POD"`, pod)
+	psel := fmt.Sprintf(`pod=%q`, pod)
+
+	var out PodSeries
+	for _, q := range []struct {
+		query string
+		line  *Line
+		label string
+	}{
+		{fmt.Sprintf(`sum(rate(container_cpu_usage_seconds_total{%s}[%s]))`, csel, rng), &out.CPU, "cpu"},
+		{fmt.Sprintf(`sum(container_memory_working_set_bytes{%s})`, csel), &out.Memory, "memory"},
+		{fmt.Sprintf(`sum(rate(container_network_transmit_bytes_total{%s}[%s]))`, psel, rng), &out.NetTx, "tx"},
+	} {
+		pts, err := s.rangePoints(ctx, q.query, start, end, step)
+		if err != nil {
+			return PodSeries{}, err
+		}
+		q.line.Label = q.label
+		q.line.Points = pts
+	}
+	return out, nil
+}
+
+// PodActiveSpan returns the min/max sample timestamps of the pod's memory series
+// over the lookback window. ok is false when the pod has no samples.
+func (s *PromSource) PodActiveSpan(ctx context.Context, pod string) (time.Time, time.Time, bool, error) {
+	now := time.Now()
+	pts, err := s.rangePoints(ctx,
+		fmt.Sprintf(`sum(container_memory_working_set_bytes{pod=%q,container!="",container!="POD"})`, pod),
+		now.Add(-activeSpanLookback), now, s.scrape)
+	if err != nil {
+		return time.Time{}, time.Time{}, false, err
+	}
+	if len(pts) == 0 {
+		return time.Time{}, time.Time{}, false, nil
+	}
+	return pts[0].T, pts[len(pts)-1].T, true, nil
+}
+
+// rangePoints runs a query_range and flattens the single matrix stream.
+func (s *PromSource) rangePoints(ctx context.Context, query string, start, end time.Time, step time.Duration) ([]Point, error) {
+	val, _, err := s.api.QueryRange(ctx, query, promv1.Range{Start: start, End: end, Step: step})
+	if err != nil {
+		return nil, fmt.Errorf("prometheus range query %q: %w", query, err)
+	}
+	m, ok := val.(model.Matrix)
+	if !ok {
+		return nil, fmt.Errorf("prometheus range query %q: unexpected type %s", query, val.Type())
+	}
+	if len(m) == 0 {
+		return nil, nil
+	}
+	pts := make([]Point, 0, len(m[0].Values))
+	for _, v := range m[0].Values {
+		pts = append(pts, Point{T: v.Timestamp.Time(), V: float64(v.Value)})
+	}
+	return pts, nil
+}
+
+// seriesStep keeps charts to ~120 points, floored at one second.
+func seriesStep(window time.Duration) time.Duration {
+	step := window / 120
+	if step < time.Second {
+		step = time.Second
+	}
+	return step
+}
+
+// rangeVector is the [range] inside rate(). It is at least four scrape intervals
+// (mirroring Grafana's $__rate_interval) so a rate reliably spans ≥2 samples
+// even for short-lived pods and slight scrape jitter — a 2×scrape window can
+// straddle just one sample and yield an empty series.
+func rangeVector(step, scrape time.Duration) string {
+	rv := step
+	if rv < 4*scrape {
+		rv = 4 * scrape
+	}
+	return fmt.Sprintf("%dms", rv.Milliseconds())
 }

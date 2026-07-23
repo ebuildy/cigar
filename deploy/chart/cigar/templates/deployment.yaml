@@ -73,6 +73,15 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secrets.existingSecret | default (include "cigar.fullname" .) }}
                   key: GITLAB_TOKEN
+            {{- if .Values.commands.enabled }}
+            - name: COMMANDS_ENABLED
+              value: {{ .Values.commands.enabled | quote }}
+            - name: COMMANDS_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.existingSecret | default (include "cigar.fullname" .) }}
+                  key: COMMANDS_SIGNING_KEY
+            {{- end }}
             - name: GITLAB_URL
               value: {{ .Values.config.gitlabUrl | quote }}
             - name: PROMETHEUS_URL
@@ -83,6 +92,8 @@ spec:
               value: {{ .Values.config.throttleWarnRatio | quote }}
             - name: SCRAPE_INTERVAL
               value: {{ .Values.config.scrapeInterval | quote }}
+            - name: CHART_FORMAT
+              value: {{ .Values.config.chartFormat | quote }}
             - name: LOG_LEVEL
               value: {{ .Values.config.logLevel | quote }}
             {{- with .Values.extraEnv }}

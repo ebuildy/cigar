@@ -30,6 +30,9 @@ startup on missing/invalid required values.
 | `LISTEN_ADDR` | no | `:8080` | Webhook HTTP listener |
 | `OPS_ADDR` | no | `:8081` | Ops listener: `/healthz`, `/readyz`, `/metrics` |
 | `LOG_LEVEL` | no | `info` | `debug` \| `info` \| `warn` \| `error` — structured JSON logs (zap) written to stdout; also settable per-invocation with the `--log-level` root flag, which takes precedence |
+| `COMMANDS_ENABLED` | no | `false` | Turn on [interactive report commands](#4-interactive-report-commands) (reply-driven `help` / `details`) |
+| `COMMANDS_SIGNING_KEY` | when `COMMANDS_ENABLED=true` | — | HMAC key signing the report marker; must be a stable random secret shared by every replica (`serve` only — `bot run` never needs it) |
+| `CHART_FORMAT` | no | `png` | Format for `details` charts: `png` (renders inline reliably in GitLab), `svg` (vector; GitLab's inline SVG rendering is unreliable), or `markdown` (an ASCII line chart embedded directly in the reply — no upload) |
 
 **Webhook authentication.** `AUTH_METHODS` lists the enabled methods in priority
 order; the first one that authenticates a request wins, otherwise the request is
@@ -222,3 +225,59 @@ mise r lint
 ```sh
 bot run --project <project-id> <pipeline-id>
 ```
+
+---
+
+## 4. Interactive report commands
+
+The bot can respond to **replies on its own MR resource-report comment** with a
+small set of commands. This is **off by default**.
+
+### Enabling it
+
+Set two environment variables (both required together; `serve` fails fast if
+`COMMANDS_ENABLED=true` and `COMMANDS_SIGNING_KEY` is empty):
+
+- `COMMANDS_ENABLED=true`
+- `COMMANDS_SIGNING_KEY=<a stable random secret>` — e.g.
+  `openssl rand -base64 32`. It must be **identical across all replicas**
+  (it signs/verifies the marker embedded in every report, so any replica must
+  be able to verify a marker written by any other).
+
+No new GitLab scope is needed: `GITLAB_TOKEN` already has `api` scope, which
+covers the discussions, uploads, and note-reply calls the command path uses.
+
+### Commands
+
+Post these as a **reply** inside the thread of the bot's resource-report
+comment (not as a new top-level comment):
+
+| Command | Result |
+|---|---|
+| `help` | Reply listing the available commands |
+| `details job <name>` | Reply with CPU, memory, and network charts for the named job in this report |
+| `details pod <runner-...>` | Same, for one of this report's runner pods |
+| `details <name>` | Auto-detects job vs. pod — names starting with `runner-` are treated as pods, everything else as a job |
+
+Each `details` reply embeds three charts (uploaded to the MR) covering the
+target's run window. Rendered as PNG by default; set `CHART_FORMAT` to `svg`
+for vector images, or `markdown` for a pure-text ASCII line chart embedded
+right in the reply (no upload).
+
+### How it works / security
+
+The bot only acts on replies inside **its own** report-comment thread, and
+only for jobs/pods that belong to **that report's pipeline** — it cannot be
+used to pull metrics for arbitrary pods elsewhere in the cluster:
+
+- The reply's discussion root must be a note **authored by the bot's own
+  GitLab user** (not spoofable by editing a comment to add the bot's marker).
+- The root note's marker is **HMAC-signed** (`COMMANDS_SIGNING_KEY`) over the
+  pipeline and MR id, so an edited/tampered marker fails verification and the
+  command is dropped silently.
+- The allowed targets (jobs/pods) are re-derived live from GitLab for that
+  signed pipeline — never read from the note's text — so editing the report
+  comment cannot widen what a command can see.
+
+Any note that isn't a recognized command, or fails one of the checks above, is
+ignored with no reply (no error is posted back).

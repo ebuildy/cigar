@@ -16,11 +16,11 @@ import (
 const secret = "s3cret"
 
 type fakeQueue struct {
-	events []PipelineEvent
+	events []Event
 	full   bool
 }
 
-func (q *fakeQueue) Enqueue(ev PipelineEvent) bool {
+func (q *fakeQueue) Enqueue(ev Event) bool {
 	if q.full {
 		return false
 	}
@@ -107,7 +107,7 @@ func TestHandler(t *testing.T) {
 			}
 
 			queue := &fakeQueue{full: tt.queueFull}
-			app := NewApp([]Authenticator{NewSecretAuth(secret)}, queue, zap.NewNop())
+			app := NewApp([]Authenticator{NewSecretAuth(secret)}, queue, zap.NewNop(), false)
 
 			req := httptest.NewRequest(method, "/webhook", strings.NewReader(tt.body))
 			req.Header.Set("X-Gitlab-Token", token)
@@ -125,11 +125,14 @@ func TestHandler(t *testing.T) {
 				t.Fatalf("queued = %d, want %d", len(queue.events), tt.wantQueued)
 			}
 			if tt.wantQueued == 1 {
-				if queue.events[0].ObjectAttributes.ID != 42 {
-					t.Fatalf("queued pipeline id = %d, want 42", queue.events[0].ObjectAttributes.ID)
+				if queue.events[0].Pipeline == nil {
+					t.Fatalf("queued event has no pipeline payload")
 				}
-				if queue.events[0].ObjectAttributes.Ref != tt.wantRef {
-					t.Fatalf("queued ref = %q, want %q", queue.events[0].ObjectAttributes.Ref, tt.wantRef)
+				if queue.events[0].Pipeline.ObjectAttributes.ID != 42 {
+					t.Fatalf("queued pipeline id = %d, want 42", queue.events[0].Pipeline.ObjectAttributes.ID)
+				}
+				if queue.events[0].Pipeline.ObjectAttributes.Ref != tt.wantRef {
+					t.Fatalf("queued ref = %q, want %q", queue.events[0].Pipeline.ObjectAttributes.Ref, tt.wantRef)
 				}
 			}
 		})
@@ -140,7 +143,7 @@ func TestHandler(t *testing.T) {
 // which app.Test cannot observe, so this test drives a real listener.
 func TestOversizedBodyRejected(t *testing.T) {
 	queue := &fakeQueue{}
-	app := NewApp([]Authenticator{NewSecretAuth(secret)}, queue, zap.NewNop())
+	app := NewApp([]Authenticator{NewSecretAuth(secret)}, queue, zap.NewNop(), false)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -184,7 +187,7 @@ func TestHandlerAuthOrdering(t *testing.T) {
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
 
 	// signature-only app accepts a signed request but rejects a secret-only one.
-	app := NewApp([]Authenticator{sig}, &fakeQueue{}, zap.NewNop())
+	app := NewApp([]Authenticator{sig}, &fakeQueue{}, zap.NewNop(), false)
 
 	signed := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(validPayload))
 	signed.Header.Set("webhook-id", "m1")
@@ -246,7 +249,7 @@ func TestHandlerAuthFirstMatchWins(t *testing.T) {
 	app := NewApp([]Authenticator{
 		countingAuth{result: false, calls: &firstCalls},
 		countingAuth{result: true, calls: &secondCalls},
-	}, &fakeQueue{}, zap.NewNop())
+	}, &fakeQueue{}, zap.NewNop(), false)
 	if got := post(app); got != http.StatusOK {
 		t.Fatalf("fall-through: status %d, want 200", got)
 	}
@@ -259,7 +262,7 @@ func TestHandlerAuthFirstMatchWins(t *testing.T) {
 	app2 := NewApp([]Authenticator{
 		countingAuth{result: true, calls: &a1},
 		countingAuth{result: false, calls: &a2},
-	}, &fakeQueue{}, zap.NewNop())
+	}, &fakeQueue{}, zap.NewNop(), false)
 	if got := post(app2); got != http.StatusOK {
 		t.Fatalf("short-circuit: status %d, want 200", got)
 	}
@@ -272,8 +275,74 @@ func TestHandlerAuthFirstMatchWins(t *testing.T) {
 	app3 := NewApp([]Authenticator{
 		countingAuth{result: false, calls: &d1},
 		countingAuth{result: false, calls: &d2},
-	}, &fakeQueue{}, zap.NewNop())
+	}, &fakeQueue{}, zap.NewNop(), false)
 	if got := post(app3); got != http.StatusUnauthorized {
 		t.Fatalf("all deny: status %d, want 401", got)
+	}
+}
+
+func postNote(t *testing.T, app *fiber.App, body string) int {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(body))
+	req.Header.Set("X-Gitlab-Token", secret)
+	req.Header.Set("X-Gitlab-Event", "Note Hook")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	return resp.StatusCode
+}
+
+func TestNoteHookDisabledIgnored(t *testing.T) {
+	queue := &fakeQueue{}
+	app := NewApp([]Authenticator{NewSecretAuth(secret)}, queue, zap.NewNop(), false)
+	body := `{"object_kind":"note","object_attributes":{"id":1,"note":"help","noteable_type":"MergeRequest","discussion_id":"abc","author_id":9},"project":{"id":7},"merge_request":{"iid":3}}`
+	if s := postNote(t, app, body); s != http.StatusOK {
+		t.Fatalf("status = %d, want 200", s)
+	}
+	if len(queue.events) != 0 {
+		t.Fatalf("enqueued %d, want 0 when commands disabled", len(queue.events))
+	}
+}
+
+func TestNoteHookMatchingEnqueues(t *testing.T) {
+	queue := &fakeQueue{}
+	app := NewApp([]Authenticator{NewSecretAuth(secret)}, queue, zap.NewNop(), true)
+	body := `{"object_kind":"note","object_attributes":{"id":1,"note":"details job build","noteable_type":"MergeRequest","discussion_id":"abc","author_id":9},"project":{"id":7},"merge_request":{"iid":3}}`
+	if s := postNote(t, app, body); s != http.StatusOK {
+		t.Fatalf("status = %d, want 200", s)
+	}
+	if len(queue.events) != 1 {
+		t.Fatalf("enqueued %d, want 1", len(queue.events))
+	}
+	ev := queue.events[0]
+	if ev.Note == nil || ev.Note.Body != "details job build" || ev.Note.DiscussionID != "abc" ||
+		ev.Note.MRIID != 3 || ev.Note.ProjectID != 7 || ev.Note.AuthorID != 9 || ev.Note.NoteID != 1 {
+		t.Fatalf("bad note event: %+v", ev.Note)
+	}
+}
+
+func TestNoteHookNonCommandIgnored(t *testing.T) {
+	queue := &fakeQueue{}
+	app := NewApp([]Authenticator{NewSecretAuth(secret)}, queue, zap.NewNop(), true)
+	body := `{"object_kind":"note","object_attributes":{"id":1,"note":"thanks!","noteable_type":"MergeRequest","discussion_id":"abc","author_id":9},"project":{"id":7},"merge_request":{"iid":3}}`
+	if s := postNote(t, app, body); s != http.StatusOK {
+		t.Fatalf("status = %d, want 200", s)
+	}
+	if len(queue.events) != 0 {
+		t.Fatalf("enqueued %d, want 0 for a non-command note", len(queue.events))
+	}
+}
+
+func TestNoteHookNonMRIgnored(t *testing.T) {
+	queue := &fakeQueue{}
+	app := NewApp([]Authenticator{NewSecretAuth(secret)}, queue, zap.NewNop(), true)
+	body := `{"object_kind":"note","object_attributes":{"id":1,"note":"help","noteable_type":"Issue","discussion_id":"abc","author_id":9},"project":{"id":7}}`
+	if s := postNote(t, app, body); s != http.StatusOK {
+		t.Fatalf("status = %d, want 200", s)
+	}
+	if len(queue.events) != 0 {
+		t.Fatalf("enqueued %d, want 0 for a non-MR note", len(queue.events))
 	}
 }

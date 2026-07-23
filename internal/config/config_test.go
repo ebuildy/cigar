@@ -59,6 +59,44 @@ func TestLoadAuthFields(t *testing.T) {
 	}
 }
 
+func TestLoadChartFormat(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     string
+		want    string
+		wantErr bool
+	}{
+		{name: "default is png", env: "", want: "png"},
+		{name: "explicit png", env: "png", want: "png"},
+		{name: "explicit svg", env: "svg", want: "svg"},
+		{name: "explicit markdown", env: "markdown", want: "markdown"},
+		{name: "md alias", env: "md", want: "md"},
+		{name: "case-insensitive", env: "SVG", want: "svg"},
+		{name: "unknown value errors", env: "gif", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("GITLAB_TOKEN", "tok")
+			t.Setenv("PROMETHEUS_URL", "http://prom")
+			t.Setenv("CHART_FORMAT", tt.env)
+
+			cfg, err := Load()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Load() with CHART_FORMAT=%q: want error, got %+v", tt.env, cfg)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.ChartFormat != tt.want {
+				t.Fatalf("ChartFormat = %q, want %q", cfg.ChartFormat, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadPodResolver(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -92,4 +130,45 @@ func TestLoadPodResolver(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLoadCommandsConfig(t *testing.T) {
+	t.Run("defaults off with no key", func(t *testing.T) {
+		t.Setenv("GITLAB_TOKEN", "tok")
+		t.Setenv("PROMETHEUS_URL", "http://prom")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.CommandsEnabled {
+			t.Fatal("CommandsEnabled = true, want false by default")
+		}
+		if cfg.CommandsSigningKey != "" {
+			t.Fatalf("CommandsSigningKey = %q, want empty", cfg.CommandsSigningKey)
+		}
+	})
+	t.Run("reads enabled and key", func(t *testing.T) {
+		t.Setenv("GITLAB_TOKEN", "tok")
+		t.Setenv("PROMETHEUS_URL", "http://prom")
+		t.Setenv("COMMANDS_ENABLED", "true")
+		t.Setenv("COMMANDS_SIGNING_KEY", "s3cret")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if !cfg.CommandsEnabled {
+			t.Fatal("CommandsEnabled = false, want true")
+		}
+		if cfg.CommandsSigningKey != "s3cret" {
+			t.Fatalf("CommandsSigningKey = %q, want %q", cfg.CommandsSigningKey, "s3cret")
+		}
+	})
+	t.Run("rejects non-boolean", func(t *testing.T) {
+		t.Setenv("GITLAB_TOKEN", "tok")
+		t.Setenv("PROMETHEUS_URL", "http://prom")
+		t.Setenv("COMMANDS_ENABLED", "maybe")
+		if _, err := Load(); err == nil {
+			t.Fatal("Load succeeded, want error on COMMANDS_ENABLED=maybe")
+		}
+	})
 }
