@@ -58,12 +58,14 @@ type Engine struct {
 	th    Thresholds
 }
 
-// New builds an engine. A nil enabled list selects every registered rule in
-// registration order; otherwise only the named rules are selected, in
+// New builds an engine. A nil or empty enabled list selects every registered
+// rule in registration order; otherwise only the named rules are selected, in
 // registration order, and an unknown name is an error. This is the seam a
 // future ADVICE_RULES environment variable plugs into.
 func New(th Thresholds, enabled []string) (*Engine, error) {
-	if enabled == nil {
+	// A nil or empty selection means every registered rule: an engine with no
+	// rules would silently produce no advice at all.
+	if len(enabled) == 0 {
 		return newEngine(th, registry), nil
 	}
 	want := make(map[string]bool, len(enabled))
@@ -77,8 +79,12 @@ func New(th Thresholds, enabled []string) (*Engine, error) {
 			delete(want, r.Name())
 		}
 	}
-	for name := range want {
-		return nil, fmt.Errorf("unknown advice rule %q", name)
+	// Report the first unknown name in the caller's own order: ranging the map
+	// would pick a different one run to run.
+	for _, name := range enabled {
+		if want[name] {
+			return nil, fmt.Errorf("unknown advice rule %q", name)
+		}
 	}
 	return newEngine(th, rules), nil
 }

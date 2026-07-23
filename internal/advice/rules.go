@@ -13,7 +13,8 @@ var registry = []Rule{
 
 // Register appends a rule to the registry so New can select it. It exists so
 // rules can be added without editing this file — call it from an init in the
-// rule's own file, or from wiring code.
+// rule's own file, or from wiring code. It is not safe for concurrent use —
+// call it during wiring/init, never while requests are in flight.
 func Register(r Rule) {
 	registry = append(registry, r)
 }

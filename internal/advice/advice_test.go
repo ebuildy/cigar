@@ -69,6 +69,14 @@ func TestNewSelectsRules(t *testing.T) {
 		t.Fatalf("New(nil) selected %d rules, want all %d", len(all.rules), len(registry))
 	}
 
+	empty, err := New(th, []string{})
+	if err != nil {
+		t.Fatalf("New(empty): %v", err)
+	}
+	if len(empty.rules) != len(registry) {
+		t.Fatalf("New(empty) selected %d rules, want all %d", len(empty.rules), len(registry))
+	}
+
 	one, err := New(th, []string{"long-job"})
 	if err != nil {
 		t.Fatalf("New([long-job]): %v", err)
