@@ -26,6 +26,8 @@ mvn -T 1 verify   # an explicit count, not -T 1C
 
 If tests fork JVMs, cap Surefire's `forkCount` too, and pin the JVM's view of the machine with `JAVA_TOOL_OPTIONS=-XX:ActiveProcessorCount=1`. Never set `-XX:-UseContainerSupport` — that disables container awareness entirely.
 
+That 1 matches the pod's current limit of 500m. If you also raise the CPU limit, raise this count to match.
+
 - <https://cwiki.apache.org/confluence/display/MAVEN/Parallel+builds+in+Maven+3>
 - <https://docs.gradle.org/current/userguide/command_line_interface.html>
 - <https://kestra.io/docs/administrator-guide/jvm-cpu-limits>

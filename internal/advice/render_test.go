@@ -101,6 +101,27 @@ func TestRenderGroupsByJobInOrder(t *testing.T) {
 	}
 }
 
+// TestRenderPipelineWideAdviceFirst pins the documented contract for advice
+// with no job attached: it renders above every job heading.
+func TestRenderPipelineWideAdviceFirst(t *testing.T) {
+	got := Render(7, []Advice{
+		{Job: "compile", Rule: "a", Title: "A", Body: "body a"},
+		{Rule: "wide", Title: "Whole pipeline", Body: "body wide"},
+	})
+	iWide := indexOf(got, "body wide")
+	iCompile := indexOf(got, "#### `compile`")
+	if iWide < 0 || iCompile < 0 {
+		t.Fatalf("missing pipeline-wide advice or job heading in:\n%s", got)
+	}
+	if iWide > iCompile {
+		t.Errorf("pipeline-wide advice rendered after a job heading:\n%s", got)
+	}
+	// It must not get a heading of its own — an empty job name is not a job.
+	if strings.Contains(got, "#### ``") {
+		t.Errorf("pipeline-wide advice rendered an empty job heading:\n%s", got)
+	}
+}
+
 func indexOf(s, sub string) int { return strings.Index(s, sub) }
 
 func countOf(s, sub string) int { return strings.Count(s, sub) }

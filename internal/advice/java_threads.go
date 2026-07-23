@@ -59,6 +59,14 @@ func (javaThreads) Check(f Facts, t Thresholds) []Advice {
 			"library thread pools. Never set `-XX:-UseContainerSupport` — that disables container " +
 			"awareness entirely.\n\n")
 	}
+	// The count comes from the limit measured on this run. The cpu-throttle rule
+	// may be advising a bigger limit in the same report, and rules do not read
+	// each other's output — say so rather than leave the two numbers looking
+	// contradictory.
+	if f.Usage.CPULimitCores > 0 {
+		fmt.Fprintf(&b, "That %d matches the pod's current limit of %s. If you also raise the CPU "+
+			"limit, raise this count to match.\n\n", n, millicores(f.Usage.CPULimitCores))
+	}
 	b.WriteString("- <https://cwiki.apache.org/confluence/display/MAVEN/Parallel+builds+in+Maven+3>\n")
 	b.WriteString("- <https://docs.gradle.org/current/userguide/command_line_interface.html>\n")
 	b.WriteString("- <https://kestra.io/docs/administrator-guide/jvm-cpu-limits>\n")
