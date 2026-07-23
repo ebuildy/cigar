@@ -226,6 +226,9 @@ releases:
           podResolver: trace
           throttleWarnRatio: "0.25"
           scrapeInterval: 60s
+          # Render `details` charts as inline markdown ASCII (no image upload) in
+          # the dev cluster. Prod default is png (see the chart values).
+          chartFormat: markdown
           # Authenticate webhooks with GitLab signing tokens (HMAC-SHA256).
           # deploy-cigar.sh sets a matching signing_token on every project hook.
           authMethods: signature
