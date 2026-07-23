@@ -189,12 +189,14 @@ func seriesStep(window time.Duration) time.Duration {
 	return step
 }
 
-// rangeVector is the [range] inside rate(), at least two scrape intervals so a
-// rate always has two samples.
+// rangeVector is the [range] inside rate(). It is at least four scrape intervals
+// (mirroring Grafana's $__rate_interval) so a rate reliably spans ≥2 samples
+// even for short-lived pods and slight scrape jitter — a 2×scrape window can
+// straddle just one sample and yield an empty series.
 func rangeVector(step, scrape time.Duration) string {
 	rv := step
-	if rv < 2*scrape {
-		rv = 2 * scrape
+	if rv < 4*scrape {
+		rv = 4 * scrape
 	}
 	return fmt.Sprintf("%dms", rv.Milliseconds())
 }
