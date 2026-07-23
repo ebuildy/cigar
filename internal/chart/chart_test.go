@@ -70,7 +70,10 @@ func TestRenderMatchesGolden(t *testing.T) {
 }
 
 func TestParseFormat(t *testing.T) {
-	for in, want := range map[string]Format{"": PNG, "png": PNG, "PNG": PNG, " svg ": SVG, "SVG": SVG} {
+	for in, want := range map[string]Format{
+		"": PNG, "png": PNG, "PNG": PNG, " svg ": SVG, "SVG": SVG,
+		"markdown": Markdown, "MD": Markdown,
+	} {
 		got, err := ParseFormat(in)
 		if err != nil || got != want {
 			t.Fatalf("ParseFormat(%q) = (%v, %v), want %v", in, got, err, want)
@@ -79,8 +82,11 @@ func TestParseFormat(t *testing.T) {
 	if _, err := ParseFormat("gif"); err == nil {
 		t.Fatal("ParseFormat(gif): want error")
 	}
-	if PNG.Ext() != "png" || SVG.Ext() != "svg" {
-		t.Fatalf("Ext: png=%q svg=%q", PNG.Ext(), SVG.Ext())
+	if PNG.Ext() != "png" || SVG.Ext() != "svg" || Markdown.Ext() != "md" {
+		t.Fatalf("Ext: png=%q svg=%q md=%q", PNG.Ext(), SVG.Ext(), Markdown.Ext())
+	}
+	if PNG.Inline() || SVG.Inline() || !Markdown.Inline() {
+		t.Fatal("Inline: only Markdown should be inline")
 	}
 }
 
@@ -105,5 +111,48 @@ func TestRenderPNGEmptySeries(t *testing.T) {
 	}
 	if _, err := png.Decode(bytes.NewReader(data)); err != nil {
 		t.Fatalf("empty-series png invalid: %v", err)
+	}
+}
+
+func TestRenderMarkdown(t *testing.T) {
+	md, err := Render(Markdown, "CPU (cores)", sampleSeries())
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	s := string(md)
+	if !strings.Contains(s, "**CPU (cores)**") {
+		t.Errorf("markdown missing bold title:\n%s", s)
+	}
+	if strings.Count(s, "```") != 2 {
+		t.Errorf("markdown missing a fenced code block:\n%s", s)
+	}
+	if !strings.ContainsRune(s, '*') { // the plotted line marker
+		t.Errorf("markdown chart has no plotted points:\n%s", s)
+	}
+}
+
+func TestRenderMarkdownMultiSeriesLegend(t *testing.T) {
+	base := time.Unix(1752912000, 0)
+	two := []Series{
+		{Label: "rx", Points: []Point{{X: base, Y: 1}, {X: base.Add(time.Minute), Y: 3}}},
+		{Label: "tx", Points: []Point{{X: base, Y: 2}, {X: base.Add(time.Minute), Y: 1}}},
+	}
+	md, err := Render(Markdown, "Network", two)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	s := string(md)
+	if !strings.Contains(s, "rx") || !strings.Contains(s, "tx") {
+		t.Errorf("multi-series markdown missing a legend:\n%s", s)
+	}
+}
+
+func TestRenderMarkdownEmpty(t *testing.T) {
+	md, err := Render(Markdown, "Empty", []Series{{Label: "x"}})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(string(md), "no data") {
+		t.Errorf("empty markdown chart should note no data:\n%s", md)
 	}
 }

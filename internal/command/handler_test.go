@@ -8,6 +8,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/chart"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/gitlab"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/metrics"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/report"
@@ -211,6 +212,33 @@ func TestHandleDetailsPodNotInReport(t *testing.T) {
 	}
 	if len(gl.replies) != 1 {
 		t.Fatalf("replies = %d, want 1 (the refusal notice)", len(gl.replies))
+	}
+}
+
+func TestHandleDetailsMarkdownInline(t *testing.T) {
+	start := time.Now().Add(-5 * time.Minute)
+	end := time.Now()
+	gl := &fakeGitLab{
+		discussion: signedRoot(42, 3),
+		jobs:       []gitlab.Job{{ID: 1, Name: "build", StartedAt: start, FinishedAt: end}},
+	}
+	se := &fakeSeries{series: nonEmptySeries()}
+	res := &fakeResolver{pods: map[int64]string{1: "runner-abc-project-7-concurrent-0"}}
+	h := newHandler(gl, res, se)
+	h.ChartFormat = chart.Markdown
+
+	if err := h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "details job build"}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	// Markdown charts are embedded in the reply, never uploaded.
+	if gl.uploads != 0 {
+		t.Fatalf("uploads = %d, want 0 for markdown format", gl.uploads)
+	}
+	if len(gl.replies) != 1 {
+		t.Fatalf("replies = %d, want 1", len(gl.replies))
+	}
+	if !strings.Contains(gl.replies[0], "```") {
+		t.Fatalf("markdown reply has no code-block chart:\n%s", gl.replies[0])
 	}
 }
 

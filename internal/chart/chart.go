@@ -32,35 +32,53 @@ const (
 	PNG Format = iota
 	// SVG is vector/smaller but GitLab's rendering of uploaded SVG is unreliable.
 	SVG
+	// Markdown is a pure-text ASCII line chart embedded directly in the reply
+	// (no upload) — renders as a monospaced code block anywhere markdown does.
+	Markdown
 )
 
-// ParseFormat maps "png"/"svg" (case-insensitive; empty defaults to png) to a
-// Format, erroring on anything else.
+// ParseFormat maps "png"/"svg"/"markdown" (case-insensitive; "md" aliases
+// markdown; empty defaults to png) to a Format, erroring on anything else.
 func ParseFormat(s string) (Format, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "", "png":
 		return PNG, nil
 	case "svg":
 		return SVG, nil
+	case "markdown", "md":
+		return Markdown, nil
 	default:
-		return PNG, fmt.Errorf("unknown chart format %q (want png or svg)", s)
+		return PNG, fmt.Errorf("unknown chart format %q (want png, svg or markdown)", s)
 	}
 }
 
-// Ext is the file extension for the format (no leading dot).
+// Ext is the upload file extension for the format (no leading dot). Unused for
+// Markdown, which is inlined rather than uploaded.
 func (f Format) Ext() string {
-	if f == SVG {
+	switch f {
+	case SVG:
 		return "svg"
+	case Markdown:
+		return "md"
+	default:
+		return "png"
 	}
-	return "png"
 }
+
+// Inline reports whether the rendered output is embedded directly in the reply
+// body (Markdown) rather than uploaded as an image and referenced.
+func (f Format) Inline() bool { return f == Markdown }
 
 // Render draws one chart with the given title and series in the given format.
 func Render(format Format, title string, series []Series) ([]byte, error) {
-	if format == SVG {
+	switch format {
+	case SVG:
 		return renderSVG(title, series)
+	case Markdown:
+		return renderMarkdown(title, series)
+	default:
+		return renderPNG(title, series)
 	}
-	return renderPNG(title, series)
 }
 
 const (

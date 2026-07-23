@@ -105,16 +105,21 @@ func (h *Handler) details(ctx context.Context, ev NoteEvent, pipelineID int64, c
 	var body strings.Builder
 	fmt.Fprintf(&body, "### Resource usage for `%s`\n\n", cmd.Name)
 	for _, c := range charts {
-		img, err := chart.Render(h.ChartFormat, c.title, c.lines)
+		data, err := chart.Render(h.ChartFormat, c.title, c.lines)
 		if err != nil {
 			return fmt.Errorf("render %s: %w", c.base, err)
 		}
-		filename := c.base + "." + h.ChartFormat.Ext()
-		md, err := h.GitLab.UploadFile(ctx, ev.ProjectID, filename, img)
-		if err != nil {
-			return fmt.Errorf("upload %s: %w", filename, err)
+		if h.ChartFormat.Inline() {
+			// Markdown charts are embedded directly — no upload.
+			body.Write(data)
+		} else {
+			filename := c.base + "." + h.ChartFormat.Ext()
+			md, err := h.GitLab.UploadFile(ctx, ev.ProjectID, filename, data)
+			if err != nil {
+				return fmt.Errorf("upload %s: %w", filename, err)
+			}
+			body.WriteString(md)
 		}
-		body.WriteString(md)
 		body.WriteString("\n\n")
 	}
 	return h.reply(ctx, ev, body.String())

@@ -22,9 +22,9 @@ config:
   throttleWarnRatio: "0.25"
   # Prometheus scrape interval; query windows are padded by one interval.
   scrapeInterval: "30s"
-  # Chart image format for `details` command replies: "png" (default, renders
-  # inline reliably in GitLab) or "svg" (vector, but GitLab's inline rendering
-  # of uploaded SVG is unreliable).
+  # Chart format for `details` command replies: "png" (default, renders inline
+  # reliably in GitLab), "svg" (vector, but GitLab's inline SVG rendering is
+  # unreliable), or "markdown" (an ASCII line chart embedded in the reply).
   chartFormat: "png"
   # debug, info, warn, error.
   logLevel: "info"

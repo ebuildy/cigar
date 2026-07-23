@@ -69,6 +69,8 @@ func TestLoadChartFormat(t *testing.T) {
 		{name: "default is png", env: "", want: "png"},
 		{name: "explicit png", env: "png", want: "png"},
 		{name: "explicit svg", env: "svg", want: "svg"},
+		{name: "explicit markdown", env: "markdown", want: "markdown"},
+		{name: "md alias", env: "md", want: "md"},
 		{name: "case-insensitive", env: "SVG", want: "svg"},
 		{name: "unknown value errors", env: "gif", wantErr: true},
 	}

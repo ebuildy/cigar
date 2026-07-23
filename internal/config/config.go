@@ -73,7 +73,7 @@ func Load() (*Config, error) {
 	}
 
 	if !validChartFormats[cfg.ChartFormat] {
-		return nil, fmt.Errorf("CHART_FORMAT must be one of png, svg, got %q", cfg.ChartFormat)
+		return nil, fmt.Errorf("CHART_FORMAT must be one of png, svg, markdown, got %q", cfg.ChartFormat)
 	}
 
 	// WEBHOOK_SECRET is only required by `serve`, which validates it itself.
@@ -104,7 +104,7 @@ func getenv(key, def string) string {
 
 var validAuthMethods = map[string]bool{"secret": true, "signature": true}
 var validPodResolvers = map[string]bool{"prometheus": true, "trace": true}
-var validChartFormats = map[string]bool{"png": true, "svg": true}
+var validChartFormats = map[string]bool{"png": true, "svg": true, "markdown": true, "md": true}
 
 // parseAuthMethods parses the comma-separated, ordered AUTH_METHODS list.
 // Order is significant (the handler tries methods in this order). An empty
