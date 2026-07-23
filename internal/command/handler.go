@@ -99,7 +99,7 @@ func (h *Handler) details(ctx context.Context, ev NoteEvent, pipelineID int64, c
 		unit  chart.Unit
 		lines []chart.Series
 	}{
-		{"cpu", "CPU (cores)", chart.UnitNone, []chart.Series{toChart(series.CPU)}},
+		{"cpu", "CPU (cores)", chart.UnitCores, []chart.Series{toChart(series.CPU)}},
 		{"memory", "Memory (bytes)", chart.UnitBytes, []chart.Series{toChart(series.Memory)}},
 		{"network", "Network (bytes/s)", chart.UnitBytesPerSec, []chart.Series{toChart(series.NetRx), toChart(series.NetTx)}},
 	}

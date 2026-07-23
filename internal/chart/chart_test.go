@@ -165,6 +165,24 @@ func TestRenderMarkdownBytesLabels(t *testing.T) {
 	}
 }
 
+func TestFormatCores(t *testing.T) {
+	for _, tt := range []struct {
+		v    float64
+		want string
+	}{
+		{0.229, "229m"},
+		{0.109, "109m"},
+		{0.5, "500m"},
+		{1, "1"},
+		{1.5, "1.5"},
+		{2.25, "2.25"},
+	} {
+		if got := formatCores(tt.v); got != tt.want {
+			t.Errorf("formatCores(%v) = %q, want %q", tt.v, got, tt.want)
+		}
+	}
+}
+
 func TestHumanBytesF(t *testing.T) {
 	for _, tt := range []struct {
 		v    float64

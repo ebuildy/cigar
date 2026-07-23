@@ -74,12 +74,15 @@ func (f Format) Inline() bool { return f == Markdown }
 type Unit int
 
 const (
-	// UnitNone formats values as a plain number (e.g. CPU cores).
+	// UnitNone formats values as a plain number.
 	UnitNone Unit = iota
 	// UnitBytes formats values with IEC byte suffixes (KiB, MiB, GiB).
 	UnitBytes
 	// UnitBytesPerSec is UnitBytes with a "/s" suffix (network throughput).
 	UnitBytesPerSec
+	// UnitCores formats CPU cores: millicores (e.g. 229m) below one core, plain
+	// cores at or above one.
+	UnitCores
 )
 
 // Render draws one chart with the given title, unit and series in the given

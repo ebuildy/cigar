@@ -116,9 +116,20 @@ func formatValue(v float64, unit Unit) string {
 		return humanBytesF(v)
 	case UnitBytesPerSec:
 		return humanBytesF(v) + "/s"
+	case UnitCores:
+		return formatCores(v)
 	default:
 		return fmt.Sprintf("%.3g", v)
 	}
+}
+
+// formatCores renders a CPU core count as millicores (e.g. 229m) below one core,
+// and as plain cores at or above one — matching the report's convention.
+func formatCores(v float64) string {
+	if math.Abs(v) < 1 {
+		return fmt.Sprintf("%dm", int(math.Round(v*1000)))
+	}
+	return fmt.Sprintf("%.3g", v)
 }
 
 // humanBytesF formats a byte count with IEC units (KiB, MiB, …), one decimal.
