@@ -19,7 +19,8 @@ func (longJob) Check(f Facts, t Thresholds) []Advice {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "This job ran for **%s**, over the %s budget. It is the pipeline's "+
-		"critical path: every push waits on it.\n\n", f.Duration.Round(time.Second), t.LongJob)
+		"critical path: every push waits on it.\n\n",
+		f.Duration.Round(time.Second), t.LongJob.Round(time.Second))
 	b.WriteString("If the work splits, split it — several jobs in one stage run in parallel on separate runners:\n\n")
 	b.WriteString("- Break independent steps (lint, unit, integration) into separate jobs.\n")
 	b.WriteString("- Shard a long test suite with `parallel:` (or `parallel:matrix:`) and a shard flag.\n")
