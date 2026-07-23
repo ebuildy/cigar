@@ -17,12 +17,13 @@ import (
 
 // Handler authorizes and executes command notes.
 type Handler struct {
-	GitLab     gitlab.Client
-	Resolver   correlate.Resolver
-	Series     metrics.SeriesSource
-	SigningKey []byte
-	BotUserID  int64
-	Log        *zap.Logger
+	GitLab      gitlab.Client
+	Resolver    correlate.Resolver
+	Series      metrics.SeriesSource
+	SigningKey  []byte
+	BotUserID   int64
+	ChartFormat chart.Format // PNG (default) or SVG
+	Log         *zap.Logger
 }
 
 // Handle authorizes and runs a single command note. Unauthorized or unparseable
@@ -93,24 +94,25 @@ func (h *Handler) details(ctx context.Context, ev NoteEvent, pipelineID int64, c
 	}
 
 	charts := []struct {
-		file  string
+		base  string
 		title string
 		lines []chart.Series
 	}{
-		{"cpu.svg", "CPU (cores)", []chart.Series{toChart(series.CPU)}},
-		{"memory.svg", "Memory (bytes)", []chart.Series{toChart(series.Memory)}},
-		{"network.svg", "Network (bytes/s)", []chart.Series{toChart(series.NetRx), toChart(series.NetTx)}},
+		{"cpu", "CPU (cores)", []chart.Series{toChart(series.CPU)}},
+		{"memory", "Memory (bytes)", []chart.Series{toChart(series.Memory)}},
+		{"network", "Network (bytes/s)", []chart.Series{toChart(series.NetRx), toChart(series.NetTx)}},
 	}
 	var body strings.Builder
 	fmt.Fprintf(&body, "### Resource usage for `%s`\n\n", cmd.Name)
 	for _, c := range charts {
-		svg, err := chart.Render(c.title, c.lines)
+		img, err := chart.Render(h.ChartFormat, c.title, c.lines)
 		if err != nil {
-			return fmt.Errorf("render %s: %w", c.file, err)
+			return fmt.Errorf("render %s: %w", c.base, err)
 		}
-		md, err := h.GitLab.UploadFile(ctx, ev.ProjectID, c.file, svg)
+		filename := c.base + "." + h.ChartFormat.Ext()
+		md, err := h.GitLab.UploadFile(ctx, ev.ProjectID, filename, img)
 		if err != nil {
-			return fmt.Errorf("upload %s: %w", c.file, err)
+			return fmt.Errorf("upload %s: %w", filename, err)
 		}
 		body.WriteString(md)
 		body.WriteString("\n\n")

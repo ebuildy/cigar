@@ -92,6 +92,8 @@ spec:
               value: {{ .Values.config.throttleWarnRatio | quote }}
             - name: SCRAPE_INTERVAL
               value: {{ .Values.config.scrapeInterval | quote }}
+            - name: CHART_FORMAT
+              value: {{ .Values.config.chartFormat | quote }}
             - name: LOG_LEVEL
               value: {{ .Values.config.logLevel | quote }}
             {{- with .Values.extraEnv }}

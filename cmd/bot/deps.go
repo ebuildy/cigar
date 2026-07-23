@@ -7,6 +7,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/chart"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/command"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/config"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/correlate"
@@ -98,12 +99,17 @@ func newCommandHandler(ctx context.Context, cfg *config.Config, log *zap.Logger)
 	if err != nil {
 		return nil, err
 	}
+	format, err := chart.ParseFormat(cfg.ChartFormat)
+	if err != nil {
+		return nil, err
+	}
 	return &command.Handler{
-		GitLab:     gl,
-		Resolver:   resolver,
-		Series:     source,
-		SigningKey: []byte(cfg.CommandsSigningKey),
-		BotUserID:  botID,
-		Log:        log,
+		GitLab:      gl,
+		Resolver:    resolver,
+		Series:      source,
+		SigningKey:  []byte(cfg.CommandsSigningKey),
+		BotUserID:   botID,
+		ChartFormat: format,
+		Log:         log,
 	}, nil
 }

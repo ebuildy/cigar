@@ -1,6 +1,8 @@
 package chart
 
 import (
+	"bytes"
+	"image/png"
 	"os"
 	"strings"
 	"testing"
@@ -20,7 +22,7 @@ func sampleSeries() []Series {
 }
 
 func TestRenderIsSanitizerSafe(t *testing.T) {
-	svg, err := Render("CPU (cores)", sampleSeries())
+	svg, err := Render(SVG, "CPU (cores)", sampleSeries())
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -44,7 +46,7 @@ func TestRenderIsSanitizerSafe(t *testing.T) {
 }
 
 func TestRenderEmptySeries(t *testing.T) {
-	svg, err := Render("Empty", []Series{{Label: "x"}})
+	svg, err := Render(SVG, "Empty", []Series{{Label: "x"}})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -54,7 +56,7 @@ func TestRenderEmptySeries(t *testing.T) {
 }
 
 func TestRenderMatchesGolden(t *testing.T) {
-	svg, err := Render("CPU (cores)", sampleSeries())
+	svg, err := Render(SVG, "CPU (cores)", sampleSeries())
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -64,5 +66,44 @@ func TestRenderMatchesGolden(t *testing.T) {
 	}
 	if string(svg) != string(want) {
 		t.Errorf("SVG != golden.\n--- got ---\n%s", svg)
+	}
+}
+
+func TestParseFormat(t *testing.T) {
+	for in, want := range map[string]Format{"": PNG, "png": PNG, "PNG": PNG, " svg ": SVG, "SVG": SVG} {
+		got, err := ParseFormat(in)
+		if err != nil || got != want {
+			t.Fatalf("ParseFormat(%q) = (%v, %v), want %v", in, got, err, want)
+		}
+	}
+	if _, err := ParseFormat("gif"); err == nil {
+		t.Fatal("ParseFormat(gif): want error")
+	}
+	if PNG.Ext() != "png" || SVG.Ext() != "svg" {
+		t.Fatalf("Ext: png=%q svg=%q", PNG.Ext(), SVG.Ext())
+	}
+}
+
+func TestRenderPNGDecodes(t *testing.T) {
+	data, err := Render(PNG, "CPU (cores)", sampleSeries())
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	im, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("decode png: %v", err)
+	}
+	if im.Bounds().Dx() != width || im.Bounds().Dy() != height {
+		t.Fatalf("png size = %v, want %dx%d", im.Bounds(), width, height)
+	}
+}
+
+func TestRenderPNGEmptySeries(t *testing.T) {
+	data, err := Render(PNG, "Empty", []Series{{Label: "x"}})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if _, err := png.Decode(bytes.NewReader(data)); err != nil {
+		t.Fatalf("empty-series png invalid: %v", err)
 	}
 }

@@ -85,6 +85,7 @@ Environment variables only (12-factor). The bot fails fast at startup if a requi
 | `LOG_LEVEL` | | `info` | `debug`, `info`, `warn`, `error` — JSON logs to stdout via [zap](https://github.com/uber-go/zap); also settable per-invocation with the `--log-level` flag |
 | `COMMANDS_ENABLED` | | `false` | Turn on [interactive report commands](docs/usage.md#4-interactive-report-commands) (reply with `help` / `details [job\|pod] <name>` on the bot's own MR report comment) |
 | `COMMANDS_SIGNING_KEY` | ✅ (`serve` only, if `COMMANDS_ENABLED=true`) | — | HMAC key signing the report marker; must be identical across all replicas |
+| `CHART_FORMAT` | | `png` | Image format for `details` charts: `png` (inline-renders reliably in GitLab) or `svg` |
 
 ### Migrating to signing-token auth
 

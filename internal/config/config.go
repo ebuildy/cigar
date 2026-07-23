@@ -24,6 +24,7 @@ type Config struct {
 	PodResolver         string
 	CommandsEnabled     bool
 	CommandsSigningKey  string
+	ChartFormat         string
 }
 
 func Load() (*Config, error) {
@@ -39,6 +40,7 @@ func Load() (*Config, error) {
 		OpsAddr:             getenv("OPS_ADDR", ":8081"),
 		PodResolver:         getenv("POD_RESOLVER", "trace"),
 		CommandsSigningKey:  os.Getenv("COMMANDS_SIGNING_KEY"),
+		ChartFormat:         strings.ToLower(getenv("CHART_FORMAT", "png")),
 	}
 	// LOG_LEVEL is consumed by the --log-level root flag (cmd/bot), not here.
 
@@ -70,6 +72,10 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("POD_RESOLVER must be one of prometheus, trace, got %q", cfg.PodResolver)
 	}
 
+	if !validChartFormats[cfg.ChartFormat] {
+		return nil, fmt.Errorf("CHART_FORMAT must be one of png, svg, got %q", cfg.ChartFormat)
+	}
+
 	// WEBHOOK_SECRET is only required by `serve`, which validates it itself.
 	for name, val := range map[string]string{
 		"GITLAB_TOKEN":   cfg.GitLabToken,
@@ -98,6 +104,7 @@ func getenv(key, def string) string {
 
 var validAuthMethods = map[string]bool{"secret": true, "signature": true}
 var validPodResolvers = map[string]bool{"prometheus": true, "trace": true}
+var validChartFormats = map[string]bool{"png": true, "svg": true}
 
 // parseAuthMethods parses the comma-separated, ordered AUTH_METHODS list.
 // Order is significant (the handler tries methods in this order). An empty

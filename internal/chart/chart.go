@@ -1,11 +1,13 @@
-// Package chart renders a labeled time series as a self-contained, sanitizer-safe
-// SVG line chart (no scripts, no external references, inline presentation only)
-// so GitLab renders it when embedded in a note via an upload.
+// Package chart renders a labeled time series as a line chart, either as a PNG
+// raster (default — GitLab renders uploaded PNGs inline reliably) or as a
+// self-contained, sanitizer-safe SVG (no scripts, no external references), both
+// pure Go so the distroless image stays cgo-free.
 package chart
 
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"text/template"
 	"time"
 )
@@ -20,6 +22,45 @@ type Point struct {
 type Series struct {
 	Label  string
 	Points []Point
+}
+
+// Format is the chart image encoding.
+type Format int
+
+const (
+	// PNG is the default: GitLab renders uploaded PNGs inline reliably.
+	PNG Format = iota
+	// SVG is vector/smaller but GitLab's rendering of uploaded SVG is unreliable.
+	SVG
+)
+
+// ParseFormat maps "png"/"svg" (case-insensitive; empty defaults to png) to a
+// Format, erroring on anything else.
+func ParseFormat(s string) (Format, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "png":
+		return PNG, nil
+	case "svg":
+		return SVG, nil
+	default:
+		return PNG, fmt.Errorf("unknown chart format %q (want png or svg)", s)
+	}
+}
+
+// Ext is the file extension for the format (no leading dot).
+func (f Format) Ext() string {
+	if f == SVG {
+		return "svg"
+	}
+	return "png"
+}
+
+// Render draws one chart with the given title and series in the given format.
+func Render(format Format, title string, series []Series) ([]byte, error) {
+	if format == SVG {
+		return renderSVG(title, series)
+	}
+	return renderPNG(title, series)
 }
 
 const (
@@ -55,8 +96,8 @@ var tmpl = template.Must(template.New("svg").Parse(
 		`<text x="8" y="{{.LabelY}}" fill="{{.Color}}">{{.Label}}</text>{{end}}` +
 		`</svg>`))
 
-// Render draws one chart with the given title and one or more series.
-func Render(title string, series []Series) ([]byte, error) {
+// renderSVG draws one chart as a sanitizer-safe SVG.
+func renderSVG(title string, series []Series) ([]byte, error) {
 	minX, maxX, minY, maxY := bounds(series)
 	vm := chartVM{Width: width, Height: height, Title: title}
 	for i, s := range series {

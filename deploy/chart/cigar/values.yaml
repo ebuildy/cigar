@@ -22,6 +22,10 @@ config:
   throttleWarnRatio: "0.25"
   # Prometheus scrape interval; query windows are padded by one interval.
   scrapeInterval: "30s"
+  # Chart image format for `details` command replies: "png" (default, renders
+  # inline reliably in GitLab) or "svg" (vector, but GitLab's inline rendering
+  # of uploaded SVG is unreliable).
+  chartFormat: "png"
   # debug, info, warn, error.
   logLevel: "info"
   # AUTH_METHODS: ordered, comma-separated webhook auth methods (secret,signature).

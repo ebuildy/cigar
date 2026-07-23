@@ -32,6 +32,7 @@ startup on missing/invalid required values.
 | `LOG_LEVEL` | no | `info` | `debug` \| `info` \| `warn` \| `error` — structured JSON logs (zap) written to stdout; also settable per-invocation with the `--log-level` root flag, which takes precedence |
 | `COMMANDS_ENABLED` | no | `false` | Turn on [interactive report commands](#4-interactive-report-commands) (reply-driven `help` / `details`) |
 | `COMMANDS_SIGNING_KEY` | when `COMMANDS_ENABLED=true` | — | HMAC key signing the report marker; must be a stable random secret shared by every replica (`serve` only — `bot run` never needs it) |
+| `CHART_FORMAT` | no | `png` | Image format for `details` charts: `png` (renders inline reliably in GitLab) or `svg` (vector, but GitLab's inline rendering of uploaded SVG is unreliable) |
 
 **Webhook authentication.** `AUTH_METHODS` lists the enabled methods in priority
 order; the first one that authenticates a request wins, otherwise the request is
@@ -254,12 +255,13 @@ comment (not as a new top-level comment):
 | Command | Result |
 |---|---|
 | `help` | Reply listing the available commands |
-| `details job <name>` | Reply with CPU, memory, and network SVG charts for the named job in this report |
+| `details job <name>` | Reply with CPU, memory, and network charts for the named job in this report |
 | `details pod <runner-...>` | Same, for one of this report's runner pods |
 | `details <name>` | Auto-detects job vs. pod — names starting with `runner-` are treated as pods, everything else as a job |
 
-Each `details` reply embeds three self-contained SVG charts (uploaded to the
-MR) covering the target's run window.
+Each `details` reply embeds three charts (uploaded to the MR) covering the
+target's run window, rendered as PNG by default (`CHART_FORMAT`; SVG is also
+available but GitLab's inline rendering of uploaded SVG is unreliable).
 
 ### How it works / security
 

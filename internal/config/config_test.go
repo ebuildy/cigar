@@ -59,6 +59,42 @@ func TestLoadAuthFields(t *testing.T) {
 	}
 }
 
+func TestLoadChartFormat(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     string
+		want    string
+		wantErr bool
+	}{
+		{name: "default is png", env: "", want: "png"},
+		{name: "explicit png", env: "png", want: "png"},
+		{name: "explicit svg", env: "svg", want: "svg"},
+		{name: "case-insensitive", env: "SVG", want: "svg"},
+		{name: "unknown value errors", env: "gif", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("GITLAB_TOKEN", "tok")
+			t.Setenv("PROMETHEUS_URL", "http://prom")
+			t.Setenv("CHART_FORMAT", tt.env)
+
+			cfg, err := Load()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Load() with CHART_FORMAT=%q: want error, got %+v", tt.env, cfg)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.ChartFormat != tt.want {
+				t.Fatalf("ChartFormat = %q, want %q", cfg.ChartFormat, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadPodResolver(t *testing.T) {
 	tests := []struct {
 		name    string
