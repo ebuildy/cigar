@@ -66,6 +66,27 @@ func TestCPUThrottleQuiet(t *testing.T) {
 	}
 }
 
+// TestCPUThrottleRequestNeverExceedsLimit pins the Kubernetes constraint: a
+// request above its limit is rejected, and requests/limits are summed per pod,
+// so the measured pair is not guaranteed coherent.
+func TestCPUThrottleRequestNeverExceedsLimit(t *testing.T) {
+	th := Thresholds{ThrottleWarnRatio: 0.25}
+	f := Facts{Name: "compile", Usage: &metrics.JobUsage{
+		ThrottledRatio:  0.9,
+		CPURequestCores: 2, // request measured, limit series absent
+	}}
+	got := cpuThrottle{}.Check(f, th)
+	if len(got) != 1 {
+		t.Fatalf("Check returned %d advice, want 1", len(got))
+	}
+	if strings.Contains(got[0].Body, `KUBERNETES_CPU_REQUEST: "2000m"`) {
+		t.Errorf("suggested a request above the suggested limit:\n%s", got[0].Body)
+	}
+	if !strings.Contains(got[0].Body, `KUBERNETES_CPU_REQUEST: "1000m"`) {
+		t.Errorf("request should be clamped to the suggested limit:\n%s", got[0].Body)
+	}
+}
+
 func TestSuggestedCPULimit(t *testing.T) {
 	tests := []struct {
 		limit float64
@@ -75,6 +96,7 @@ func TestSuggestedCPULimit(t *testing.T) {
 		{limit: 0.5, want: "1000m"},
 		{limit: 0.25, want: "500m"},
 		{limit: 0.35, want: "700m"},
+		{limit: 0.31, want: "700m"}, // 620m rounds up to the next 100m
 		{limit: 2, want: "4000m"},
 	}
 	for _, tt := range tests {
