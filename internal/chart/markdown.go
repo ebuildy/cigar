@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 )
 
 const (
 	mdRows = 8  // chart height in text rows
-	mdCols = 56 // max chart width in columns (series are downsampled to fit)
+	mdCols = 67 // max chart width in columns (series are downsampled to fit)
 )
 
 // mdMarkers distinguishes overlaid series (ASCII so it renders everywhere).
@@ -24,10 +25,17 @@ func renderMarkdown(title string, unit Unit, series []Series) ([]byte, error) {
 
 	cols := make([][]float64, len(series))
 	width, haveData := 0, false
+	var minT, maxT time.Time
 	for i, s := range series {
 		v := make([]float64, len(s.Points))
 		for j, p := range s.Points {
 			v[j] = p.Y
+			if !haveData && j == 0 || p.X.Before(minT) {
+				minT = p.X
+			}
+			if p.X.After(maxT) {
+				maxT = p.X
+			}
 		}
 		cols[i] = downsample(v, mdCols)
 		if len(cols[i]) > 0 {
@@ -96,6 +104,16 @@ func renderMarkdown(title string, unit Unit, series []Series) ([]byte, error) {
 		b.WriteByte('\n')
 	}
 	fmt.Fprintf(&b, "%*s +%s\n", gutter, "", strings.Repeat("-", width))
+
+	// X-axis labels: start time on the left, window duration on the right,
+	// aligned under the plot area (which begins gutter+2 chars in).
+	start := minT.Format("15:04 02/01")
+	dur := humanDuration(maxT.Sub(minT))
+	gap := width - len(start) - len(dur)
+	if gap < 1 {
+		gap = 1
+	}
+	fmt.Fprintf(&b, "%*s%s%s%s\n", gutter+2, "", start, strings.Repeat(" ", gap), dur)
 	b.WriteString("```\n")
 
 	if len(series) > 1 { // legend so overlaid markers are readable
@@ -120,6 +138,28 @@ func formatValue(v float64, unit Unit) string {
 		return formatCores(v)
 	default:
 		return fmt.Sprintf("%.3g", v)
+	}
+}
+
+// humanDuration formats a duration compactly and human-readably, rounded to the
+// second (e.g. "45s", "2m5s", "1h5m").
+func humanDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		m, s := int(d/time.Minute), int((d%time.Minute)/time.Second)
+		if s == 0 {
+			return fmt.Sprintf("%dm", m)
+		}
+		return fmt.Sprintf("%dm%ds", m, s)
+	default:
+		h, m := int(d/time.Hour), int((d%time.Hour)/time.Minute)
+		if m == 0 {
+			return fmt.Sprintf("%dh", h)
+		}
+		return fmt.Sprintf("%dh%dm", h, m)
 	}
 }
 

@@ -165,6 +165,42 @@ func TestRenderMarkdownBytesLabels(t *testing.T) {
 	}
 }
 
+func TestRenderMarkdownXAxis(t *testing.T) {
+	start := time.Date(2026, 7, 23, 14, 5, 0, 0, time.UTC)
+	var pts []Point
+	for i := 0; i < 10; i++ { // 9 intervals * 30s = 4m30s span
+		pts = append(pts, Point{X: start.Add(time.Duration(i) * 30 * time.Second), Y: float64(i)})
+	}
+	md, err := Render(Markdown, "CPU (cores)", UnitCores, []Series{{Label: "cpu", Points: pts}})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	s := string(md)
+	if !strings.Contains(s, "14:05 23/07") {
+		t.Errorf("x-axis missing start time (HH:mm dd/MM):\n%s", s)
+	}
+	if !strings.Contains(s, "4m30s") {
+		t.Errorf("x-axis missing duration:\n%s", s)
+	}
+}
+
+func TestHumanDuration(t *testing.T) {
+	for _, tt := range []struct {
+		d    time.Duration
+		want string
+	}{
+		{45 * time.Second, "45s"},
+		{125 * time.Second, "2m5s"},
+		{120 * time.Second, "2m"},
+		{3600 * time.Second, "1h"},
+		{3900 * time.Second, "1h5m"},
+	} {
+		if got := humanDuration(tt.d); got != tt.want {
+			t.Errorf("humanDuration(%v) = %q, want %q", tt.d, got, tt.want)
+		}
+	}
+}
+
 func TestFormatCores(t *testing.T) {
 	for _, tt := range []struct {
 		v    float64
