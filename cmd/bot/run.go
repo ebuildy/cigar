@@ -139,13 +139,14 @@ func printJobDetails(cmd *cobra.Command, rep *reporter.Reporter, cfg *config.Con
 	}
 	for _, c := range []struct {
 		title string
+		unit  chart.Unit
 		lines []chart.Series
 	}{
-		{"CPU (cores)", []chart.Series{lineToSeries(series.CPU)}},
-		{"Memory (bytes)", []chart.Series{lineToSeries(series.Memory)}},
-		{"Network (bytes/s)", []chart.Series{lineToSeries(series.NetRx), lineToSeries(series.NetTx)}},
+		{"CPU (cores)", chart.UnitNone, []chart.Series{lineToSeries(series.CPU)}},
+		{"Memory (bytes)", chart.UnitBytes, []chart.Series{lineToSeries(series.Memory)}},
+		{"Network (bytes/s)", chart.UnitBytesPerSec, []chart.Series{lineToSeries(series.NetRx), lineToSeries(series.NetTx)}},
 	} {
-		md, err := chart.Render(chart.Markdown, c.title, c.lines)
+		md, err := chart.Render(chart.Markdown, c.title, c.unit, c.lines)
 		if err != nil {
 			return fmt.Errorf("render %s chart: %w", c.title, err)
 		}

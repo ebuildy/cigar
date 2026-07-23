@@ -96,16 +96,17 @@ func (h *Handler) details(ctx context.Context, ev NoteEvent, pipelineID int64, c
 	charts := []struct {
 		base  string
 		title string
+		unit  chart.Unit
 		lines []chart.Series
 	}{
-		{"cpu", "CPU (cores)", []chart.Series{toChart(series.CPU)}},
-		{"memory", "Memory (bytes)", []chart.Series{toChart(series.Memory)}},
-		{"network", "Network (bytes/s)", []chart.Series{toChart(series.NetRx), toChart(series.NetTx)}},
+		{"cpu", "CPU (cores)", chart.UnitNone, []chart.Series{toChart(series.CPU)}},
+		{"memory", "Memory (bytes)", chart.UnitBytes, []chart.Series{toChart(series.Memory)}},
+		{"network", "Network (bytes/s)", chart.UnitBytesPerSec, []chart.Series{toChart(series.NetRx), toChart(series.NetTx)}},
 	}
 	var body strings.Builder
 	fmt.Fprintf(&body, "### Resource usage for `%s`\n\n", cmd.Name)
 	for _, c := range charts {
-		data, err := chart.Render(h.ChartFormat, c.title, c.lines)
+		data, err := chart.Render(h.ChartFormat, c.title, c.unit, c.lines)
 		if err != nil {
 			return fmt.Errorf("render %s: %w", c.base, err)
 		}

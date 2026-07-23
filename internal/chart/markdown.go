@@ -8,9 +8,8 @@ import (
 )
 
 const (
-	mdRows  = 8  // chart height in text rows
-	mdCols  = 56 // max chart width in columns (series are downsampled to fit)
-	mdGutter = 8 // width of the left-hand y-axis label column
+	mdRows = 8  // chart height in text rows
+	mdCols = 56 // max chart width in columns (series are downsampled to fit)
 )
 
 // mdMarkers distinguishes overlaid series (ASCII so it renders everywhere).
@@ -19,7 +18,7 @@ var mdMarkers = []rune{'*', '+', 'x', 'o'}
 // renderMarkdown draws a pure-text ASCII line chart inside a fenced code block,
 // embedded directly in the reply (no upload). It renders as a monospaced block
 // wherever markdown is shown.
-func renderMarkdown(title string, series []Series) ([]byte, error) {
+func renderMarkdown(title string, unit Unit, series []Series) ([]byte, error) {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "**%s**\n\n```\n", title)
 
@@ -81,19 +80,22 @@ func renderMarkdown(title string, series []Series) ([]byte, error) {
 		}
 	}
 
+	// Human-readable y-axis labels (top=max, bottom=min); gutter sized to fit.
+	topLabel, botLabel := formatValue(vmax, unit), formatValue(vmin, unit)
+	gutter := max(len(topLabel), len(botLabel))
 	for r := 0; r < mdRows; r++ {
+		label := ""
 		switch r {
 		case 0:
-			fmt.Fprintf(&b, "%*.3g |", mdGutter, vmax)
+			label = topLabel
 		case mdRows - 1:
-			fmt.Fprintf(&b, "%*.3g |", mdGutter, vmin)
-		default:
-			fmt.Fprintf(&b, "%*s |", mdGutter, "")
+			label = botLabel
 		}
+		fmt.Fprintf(&b, "%*s |", gutter, label)
 		b.WriteString(string(grid[r]))
 		b.WriteByte('\n')
 	}
-	fmt.Fprintf(&b, "%*s +%s\n", mdGutter, "", strings.Repeat("-", width))
+	fmt.Fprintf(&b, "%*s +%s\n", gutter, "", strings.Repeat("-", width))
 	b.WriteString("```\n")
 
 	if len(series) > 1 { // legend so overlaid markers are readable
@@ -104,6 +106,33 @@ func renderMarkdown(title string, series []Series) ([]byte, error) {
 		b.WriteString(strings.Join(parts, " · ") + "\n")
 	}
 	return b.Bytes(), nil
+}
+
+// formatValue renders a y-axis label human-readably for the given unit,
+// avoiding scientific notation.
+func formatValue(v float64, unit Unit) string {
+	switch unit {
+	case UnitBytes:
+		return humanBytesF(v)
+	case UnitBytesPerSec:
+		return humanBytesF(v) + "/s"
+	default:
+		return fmt.Sprintf("%.3g", v)
+	}
+}
+
+// humanBytesF formats a byte count with IEC units (KiB, MiB, …), one decimal.
+func humanBytesF(v float64) string {
+	const unit = 1024.0
+	if math.Abs(v) < unit {
+		return fmt.Sprintf("%.0f B", v)
+	}
+	div, exp := unit, 0
+	for n := math.Abs(v) / unit; n >= unit && exp < 4; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", v/div, "KMGTP"[exp])
 }
 
 // downsample reduces v to at most n points by averaging contiguous buckets, so

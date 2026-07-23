@@ -69,13 +69,27 @@ func (f Format) Ext() string {
 // body (Markdown) rather than uploaded as an image and referenced.
 func (f Format) Inline() bool { return f == Markdown }
 
-// Render draws one chart with the given title and series in the given format.
-func Render(format Format, title string, series []Series) ([]byte, error) {
+// Unit tells the renderer how to format the y-axis value labels human-readably
+// (only the Markdown format shows numeric axis labels).
+type Unit int
+
+const (
+	// UnitNone formats values as a plain number (e.g. CPU cores).
+	UnitNone Unit = iota
+	// UnitBytes formats values with IEC byte suffixes (KiB, MiB, GiB).
+	UnitBytes
+	// UnitBytesPerSec is UnitBytes with a "/s" suffix (network throughput).
+	UnitBytesPerSec
+)
+
+// Render draws one chart with the given title, unit and series in the given
+// format. unit only affects the Markdown axis labels.
+func Render(format Format, title string, unit Unit, series []Series) ([]byte, error) {
 	switch format {
 	case SVG:
 		return renderSVG(title, series)
 	case Markdown:
-		return renderMarkdown(title, series)
+		return renderMarkdown(title, unit, series)
 	default:
 		return renderPNG(title, series)
 	}

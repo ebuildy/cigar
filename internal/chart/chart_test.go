@@ -22,7 +22,7 @@ func sampleSeries() []Series {
 }
 
 func TestRenderIsSanitizerSafe(t *testing.T) {
-	svg, err := Render(SVG, "CPU (cores)", sampleSeries())
+	svg, err := Render(SVG, "CPU (cores)", UnitNone, sampleSeries())
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestRenderIsSanitizerSafe(t *testing.T) {
 }
 
 func TestRenderEmptySeries(t *testing.T) {
-	svg, err := Render(SVG, "Empty", []Series{{Label: "x"}})
+	svg, err := Render(SVG, "Empty", UnitNone, []Series{{Label: "x"}})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestRenderEmptySeries(t *testing.T) {
 }
 
 func TestRenderMatchesGolden(t *testing.T) {
-	svg, err := Render(SVG, "CPU (cores)", sampleSeries())
+	svg, err := Render(SVG, "CPU (cores)", UnitNone, sampleSeries())
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestParseFormat(t *testing.T) {
 }
 
 func TestRenderPNGDecodes(t *testing.T) {
-	data, err := Render(PNG, "CPU (cores)", sampleSeries())
+	data, err := Render(PNG, "CPU (cores)", UnitNone, sampleSeries())
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestRenderPNGDecodes(t *testing.T) {
 }
 
 func TestRenderPNGEmptySeries(t *testing.T) {
-	data, err := Render(PNG, "Empty", []Series{{Label: "x"}})
+	data, err := Render(PNG, "Empty", UnitNone, []Series{{Label: "x"}})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestRenderPNGEmptySeries(t *testing.T) {
 }
 
 func TestRenderMarkdown(t *testing.T) {
-	md, err := Render(Markdown, "CPU (cores)", sampleSeries())
+	md, err := Render(Markdown, "CPU (cores)", UnitNone, sampleSeries())
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestRenderMarkdownMultiSeriesLegend(t *testing.T) {
 		{Label: "rx", Points: []Point{{X: base, Y: 1}, {X: base.Add(time.Minute), Y: 3}}},
 		{Label: "tx", Points: []Point{{X: base, Y: 2}, {X: base.Add(time.Minute), Y: 1}}},
 	}
-	md, err := Render(Markdown, "Network", two)
+	md, err := Render(Markdown, "Network", UnitBytesPerSec, two)
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -147,8 +147,42 @@ func TestRenderMarkdownMultiSeriesLegend(t *testing.T) {
 	}
 }
 
+func TestRenderMarkdownBytesLabels(t *testing.T) {
+	base := time.Unix(1752912000, 0)
+	mem := []Series{{Label: "memory", Points: []Point{
+		{X: base, Y: 5_130_000}, {X: base.Add(time.Minute), Y: 88_200_000},
+	}}}
+	md, err := Render(Markdown, "Memory (bytes)", UnitBytes, mem)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	s := string(md)
+	if strings.Contains(s, "e+0") || strings.Contains(s, "e+1") {
+		t.Errorf("byte labels used scientific notation:\n%s", s)
+	}
+	if !strings.Contains(s, "MiB") {
+		t.Errorf("byte labels missing IEC unit (MiB):\n%s", s)
+	}
+}
+
+func TestHumanBytesF(t *testing.T) {
+	for _, tt := range []struct {
+		v    float64
+		want string
+	}{
+		{500, "500 B"},
+		{88_200_000, "84.1 MiB"},
+		{5_130_000, "4.9 MiB"},
+		{2 * 1024 * 1024 * 1024, "2.0 GiB"},
+	} {
+		if got := humanBytesF(tt.v); got != tt.want {
+			t.Errorf("humanBytesF(%v) = %q, want %q", tt.v, got, tt.want)
+		}
+	}
+}
+
 func TestRenderMarkdownEmpty(t *testing.T) {
-	md, err := Render(Markdown, "Empty", []Series{{Label: "x"}})
+	md, err := Render(Markdown, "Empty", UnitNone, []Series{{Label: "x"}})
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
