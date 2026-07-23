@@ -42,6 +42,33 @@ func TestMemoryPressureAbsentLimit(t *testing.T) {
 	}
 }
 
+// TestMemoryPressureBoundaries covers the two ends the guard clause turns on:
+// exactly at the threshold it fires, and a peak that already passed the limit
+// (a late-arriving sample before an OOMKill) still fires and still clamps.
+func TestMemoryPressureBoundaries(t *testing.T) {
+	th := Thresholds{MemoryPressureRatio: 0.9}
+	rule := memoryPressure{}
+
+	atThreshold := rule.Check(Facts{Name: "unit", Usage: &metrics.JobUsage{
+		PeakMemoryBytes:  461 * mib, // 461/512 = 0.900…, the first ratio at 0.9
+		MemoryLimitBytes: 512 * mib,
+	}}, th)
+	if len(atThreshold) != 1 {
+		t.Fatalf("at the threshold: %d advice, want 1", len(atThreshold))
+	}
+
+	overLimit := rule.Check(Facts{Name: "unit", Usage: &metrics.JobUsage{
+		PeakMemoryBytes:  600 * mib,
+		MemoryLimitBytes: 512 * mib,
+	}}, th)
+	if len(overLimit) != 1 {
+		t.Fatalf("peak over limit: %d advice, want 1", len(overLimit))
+	}
+	if !strings.Contains(overLimit[0].Body, "117%") {
+		t.Errorf("peak over limit should report a ratio above 100%%:\n%s", overLimit[0].Body)
+	}
+}
+
 func TestMemoryPressureQuiet(t *testing.T) {
 	th := Thresholds{MemoryPressureRatio: 0.9}
 	tests := []struct {
