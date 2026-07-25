@@ -65,7 +65,7 @@ func serve(ctx context.Context) error {
 	}
 	var cmdHandler *command.Handler
 	if cfg.CommandsEnabled {
-		cmdHandler, err = newCommandHandler(ctx, cfg, log)
+		cmdHandler, err = newCommandHandler(ctx, cfg, log, rep)
 		if err != nil {
 			return err
 		}
