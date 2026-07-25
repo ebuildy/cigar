@@ -14,6 +14,7 @@ type Kind int
 const (
 	KindHelp Kind = iota
 	KindDetails
+	KindAdvise
 )
 
 // TargetType is the resolved kind of a details target.
@@ -45,6 +46,7 @@ type NoteEvent struct {
 var (
 	helpRE    = regexp.MustCompile(`(?i)^help$`)
 	detailsRE = regexp.MustCompile(`(?i)^details\s+(?:(job|pod)\s+)?(\S+)$`)
+	adviseRE  = regexp.MustCompile(`(?i)^advise(?:\s+(?:job\s+)?(\S+))?$`)
 	runnerRE  = regexp.MustCompile(`^runner-`)
 )
 
@@ -71,6 +73,10 @@ func Parse(body string) (Command, bool) {
 		}
 		return cmd, true
 	}
+	if m := adviseRE.FindStringSubmatch(line); m != nil {
+		// Advice is always about a CI job — there is no pod target.
+		return Command{Kind: KindAdvise, Target: TargetJob, Name: m[1]}, true
+	}
 	return Command{}, false
 }
 
@@ -88,4 +94,6 @@ const HelpText = "**cigar commands**\n\n" +
 	"- `help` — show this message\n" +
 	"- `details job <name>` — CPU / memory / network charts for a job in this report\n" +
 	"- `details pod <runner-...>` — same, for a runner pod in this report\n" +
-	"- `details <name>` — auto-detects job vs pod\n"
+	"- `details <name>` — auto-detects job vs pod\n" +
+	"- `advise` — recommendations for every job in this report\n" +
+	"- `advise <job>` — recommendations for one job\n"
