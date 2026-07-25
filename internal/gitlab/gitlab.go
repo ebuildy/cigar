@@ -72,23 +72,36 @@ func (a *apiClient) MergeRequestForBranch(ctx context.Context, projectID int64, 
 	return mrs[0].IID, true, nil
 }
 
+// UpsertNote posts the report, reusing the bot's existing report note only when
+// its discussion has no sub-notes. A report note whose thread has grown replies
+// (e.g. from an interactive advise/details command) is left untouched and a
+// fresh note is posted instead — the running report must never edit a note
+// people are already discussing.
 func (a *apiClient) UpsertNote(ctx context.Context, projectID, mrIID int64, marker, body string) error {
-	opts := &gl.ListMergeRequestNotesOptions{ListOptions: gl.ListOptions{PerPage: 100}}
+	opts := &gl.ListMergeRequestDiscussionsOptions{ListOptions: gl.ListOptions{PerPage: 100}}
 	for {
-		notes, resp, err := a.c.Notes.ListMergeRequestNotes(projectID, mrIID, opts, gl.WithContext(ctx))
+		discs, resp, err := a.c.Discussions.ListMergeRequestDiscussions(projectID, mrIID, opts, gl.WithContext(ctx))
 		if err != nil {
-			return fmt.Errorf("list notes of MR !%d: %w", mrIID, err)
+			return fmt.Errorf("list discussions of MR !%d: %w", mrIID, err)
 		}
-		for _, n := range notes {
-			if strings.Contains(n.Body, marker) {
-				if _, _, err := a.c.Notes.UpdateMergeRequestNote(projectID, mrIID, n.ID,
-					&gl.UpdateMergeRequestNoteOptions{Body: gl.Ptr(body)}, gl.WithContext(ctx)); err != nil {
-					return fmt.Errorf("update note %d on MR !%d: %w", n.ID, mrIID, err)
-				}
-				a.log.Debug("updated existing MR note",
-					zap.Int64("project_id", projectID), zap.Int64("mr_iid", mrIID), zap.Int64("note_id", n.ID))
-				return nil
+		for _, d := range discs {
+			if len(d.Notes) == 0 {
+				continue
 			}
+			root := d.Notes[0]
+			// A report note is the marker-bearing root of its thread. Skip
+			// human/system notes, and skip any report thread that already has
+			// replies (len > 1) — that one gets a new note, not an edit.
+			if root.System || !strings.Contains(root.Body, marker) || len(d.Notes) > 1 {
+				continue
+			}
+			if _, _, err := a.c.Notes.UpdateMergeRequestNote(projectID, mrIID, root.ID,
+				&gl.UpdateMergeRequestNoteOptions{Body: gl.Ptr(body)}, gl.WithContext(ctx)); err != nil {
+				return fmt.Errorf("update note %d on MR !%d: %w", root.ID, mrIID, err)
+			}
+			a.log.Debug("updated existing MR report note in place",
+				zap.Int64("project_id", projectID), zap.Int64("mr_iid", mrIID), zap.Int64("note_id", root.ID))
+			return nil
 		}
 		if resp.NextPage == 0 {
 			break
@@ -99,7 +112,7 @@ func (a *apiClient) UpsertNote(ctx context.Context, projectID, mrIID int64, mark
 		&gl.CreateMergeRequestNoteOptions{Body: gl.Ptr(body)}, gl.WithContext(ctx)); err != nil {
 		return fmt.Errorf("create note on MR !%d: %w", mrIID, err)
 	}
-	a.log.Debug("created new MR note", zap.Int64("project_id", projectID), zap.Int64("mr_iid", mrIID))
+	a.log.Debug("created new MR report note", zap.Int64("project_id", projectID), zap.Int64("mr_iid", mrIID))
 	return nil
 }
 

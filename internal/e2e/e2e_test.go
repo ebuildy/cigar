@@ -76,15 +76,25 @@ func (m *mockGitLab) server(t *testing.T) *httptest.Server {
 			}
 			_, _ = fmt.Fprint(w, `[]`)
 		})
-	mux.HandleFunc(fmt.Sprintf("GET /api/v4/projects/%d/merge_requests/%d/notes", projectID, mrIID),
+	// UpsertNote finds the report note through the discussions API. Each stored
+	// note is one discussion; the first report note owns any command replies as
+	// its sub-notes, so a report with replies reads back as a multi-note thread.
+	mux.HandleFunc(fmt.Sprintf("GET /api/v4/projects/%d/merge_requests/%d/discussions", projectID, mrIID),
 		func(w http.ResponseWriter, _ *http.Request) {
 			m.mu.Lock()
 			defer m.mu.Unlock()
-			items := make([]string, len(m.notes))
+			discs := make([]string, len(m.notes))
 			for i, body := range m.notes {
-				items[i] = fmt.Sprintf(`{"id":%d,"body":%q}`, i+1, body)
+				notes := []string{fmt.Sprintf(`{"id":%d,"body":%q,"author":{"id":555},"system":false}`, i+1, body)}
+				if i == 0 {
+					for j, reply := range m.replies {
+						notes = append(notes, fmt.Sprintf(`{"id":%d,"body":%q,"author":{"id":9},"system":false}`, 1000+j, reply))
+					}
+				}
+				discs[i] = fmt.Sprintf(`{"id":"d%d","individual_note":%t,"notes":[%s]}`,
+					i+1, len(notes) == 1, strings.Join(notes, ","))
 			}
-			_, _ = fmt.Fprintf(w, "[%s]", strings.Join(items, ","))
+			_, _ = fmt.Fprintf(w, "[%s]", strings.Join(discs, ","))
 		})
 	mux.HandleFunc(fmt.Sprintf("POST /api/v4/projects/%d/merge_requests/%d/notes", projectID, mrIID),
 		func(w http.ResponseWriter, r *http.Request) {
@@ -96,11 +106,14 @@ func (m *mockGitLab) server(t *testing.T) *httptest.Server {
 		})
 	mux.HandleFunc(fmt.Sprintf("PUT /api/v4/projects/%d/merge_requests/%d/notes/{id}", projectID, mrIID),
 		func(w http.ResponseWriter, r *http.Request) {
+			id, _ := strconv.Atoi(r.PathValue("id"))
 			m.mu.Lock()
 			defer m.mu.Unlock()
-			m.notes[0] = noteBody(t, r)
+			if id >= 1 && id <= len(m.notes) {
+				m.notes[id-1] = noteBody(t, r)
+			}
 			m.updates++
-			_, _ = fmt.Fprint(w, `{"id":1}`)
+			_, _ = fmt.Fprintf(w, `{"id":%d}`, id)
 		})
 	mux.HandleFunc(fmt.Sprintf("GET /api/v4/projects/%d/jobs/%d/trace", projectID, jobID),
 		func(w http.ResponseWriter, _ *http.Request) {
@@ -347,6 +360,47 @@ func TestWebhookToMRNote(t *testing.T) {
 	defer glMock.mu.Unlock()
 	if len(glMock.notes) != 1 {
 		t.Fatalf("notes = %d after retry, want 1 (updated, not duplicated)", len(glMock.notes))
+	}
+}
+
+// TestWebhookNewNoteAfterReplies proves the report is reposted as a fresh note
+// once its discussion has sub-notes (e.g. an advise/details reply), rather than
+// editing a note people are already discussing.
+func TestWebhookNewNoteAfterReplies(t *testing.T) {
+	app, glMock, _ := harness(t, "prometheus")
+
+	payload := fmt.Sprintf(`{
+		"object_kind": "pipeline",
+		"object_attributes": {"id": %d, "status": "success"},
+		"project": {"id": %d},
+		"merge_request": {"iid": %d}
+	}`, pipelineID, projectID, mrIID)
+
+	// First delivery creates the report note.
+	postWebhook(t, app, payload)
+	waitFor(t, "note created", func() bool {
+		glMock.mu.Lock()
+		defer glMock.mu.Unlock()
+		return len(glMock.notes) == 1
+	})
+
+	// A reply lands in the report's discussion, as an advise/details command would.
+	glMock.mu.Lock()
+	glMock.replies = append(glMock.replies, "an interactive reply")
+	glMock.mu.Unlock()
+
+	// Second delivery: the report note now has a sub-note, so a NEW note is
+	// posted rather than the existing thread being edited.
+	postWebhook(t, app, payload)
+	waitFor(t, "second note posted", func() bool {
+		glMock.mu.Lock()
+		defer glMock.mu.Unlock()
+		return len(glMock.notes) == 2
+	})
+	glMock.mu.Lock()
+	defer glMock.mu.Unlock()
+	if glMock.updates != 0 {
+		t.Fatalf("updates = %d, want 0 (a replied report must not be edited)", glMock.updates)
 	}
 }
 
