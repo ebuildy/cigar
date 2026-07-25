@@ -16,6 +16,8 @@ type JobUsage struct {
 	ThrottledRatio  float64 // throttled_periods / periods over the window
 	NetworkRxBytes  uint64
 	NetworkTxBytes  uint64
+	DiskReadBytes   uint64 // increase(container_fs_reads_bytes_total)
+	DiskWriteBytes  uint64 // increase(container_fs_writes_bytes_total)
 
 	CPURequestCores    float64
 	CPULimitCores      float64

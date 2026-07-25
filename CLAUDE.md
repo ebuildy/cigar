@@ -13,8 +13,8 @@ A Go service that receives GitLab **Pipeline events** webhooks, queries **Promet
 
 ### Report content
 
-- Pipeline totals: total memory (sum of job peaks), peak memory (max working set), CPU time consumed, network RX/TX.
-- Per-job table: job name | CPU time | peak memory | memory request/limit | CPU request/limit | throttled % | network.
+- Pipeline totals: wall-clock duration (max finish − min start across jobs), total memory (sum of job peaks), peak memory (max working set), CPU time consumed, network RX/TX, disk read/write.
+- Per-job table: job name | CPU time | peak memory | memory request/limit | CPU request/limit | throttled % | network | disk read/write.
 - ⚠️ CPU throttling warning when `throttled_periods / periods > threshold` (default 25%), with advice: set `KUBERNETES_CPU_REQUEST` / `KUBERNETES_CPU_LIMIT` GitLab CI variables (and the memory equivalents `KUBERNETES_MEMORY_REQUEST` / `KUBERNETES_MEMORY_LIMIT`) on the job or project.
 - Advice when usage ≪ requests (over-provisioned) or peak memory near limit (OOM risk).
 
@@ -80,6 +80,7 @@ Either way, always exclude the `POD`/pause container (`container!="", container!
 - CPU time: `increase(container_cpu_usage_seconds_total{...}[<window>])` → render as millicore-seconds or "232m avg".
 - Throttling: `increase(container_cpu_cfs_throttled_periods_total[...]) / increase(container_cpu_cfs_periods_total[...])` per container.
 - Network: `increase(container_network_receive_bytes_total{...}[<window>])` and transmit equivalent (pod-level, no `container` label).
+- Disk: `increase(container_fs_reads_bytes_total{...}[<window>])` and writes equivalent (container-level, excludes POD; summed per container).
 - Requests/limits: `kube_pod_container_resource_requests` / `kube_pod_container_resource_limits` (kube-state-metrics).
 - Account for Prometheus scrape interval (`SCRAPE_INTERVAL`, default `30s`): pad windows by one scrape interval; short jobs (<2 scrapes) get a "low confidence" marker, not fabricated numbers.
 - Absent series ≠ zero: a query matching nothing leaves the field unset, it is never written as `0` measured.

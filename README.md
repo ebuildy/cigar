@@ -14,8 +14,8 @@ It receives GitLab **Pipeline event** webhooks, queries **Prometheus** (cadvisor
 
 ## What you get on your MR
 
-- **Pipeline totals** — total memory (sum of job peaks), peak memory, CPU time consumed, network RX/TX.
-- **Per-job table** — job name, CPU time, peak memory, memory request/limit, CPU request/limit, throttled %, network.
+- **Pipeline totals** — wall-clock duration (earliest start → latest finish), total memory (sum of job peaks), peak memory, CPU time consumed, network RX/TX, disk read/write.
+- **Per-job table** — job name, CPU time, peak memory, memory request/limit, CPU request/limit, throttled %, network, disk read/write.
 - **⚠️ CPU throttling warnings** when `throttled_periods / periods` exceeds the threshold (default 25 %), with concrete advice: set `KUBERNETES_CPU_REQUEST` / `KUBERNETES_CPU_LIMIT` (and the memory equivalents) on the job or project.
 - **Right-sizing hints** — over-provisioning advice when usage ≪ requests, OOM-risk warning when peak memory is near the limit.
 

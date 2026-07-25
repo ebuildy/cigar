@@ -90,9 +90,11 @@ func (r *Reporter) Build(ctx context.Context, projectID, pipelineID int64) (repo
 			data.RanJobs++
 		}
 		data.Jobs = append(data.Jobs, report.JobReport{
-			Stage: job.Stage,
-			Name:  job.Name,
-			Usage: r.jobUsage(ctx, projectID, job),
+			Stage:      job.Stage,
+			Name:       job.Name,
+			StartedAt:  job.StartedAt,
+			FinishedAt: job.FinishedAt,
+			Usage:      r.jobUsage(ctx, projectID, job),
 		})
 	}
 	return data, nil

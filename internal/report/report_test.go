@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/metrics"
 )
@@ -22,33 +23,46 @@ func mustRender(t *testing.T, d Data) string {
 }
 
 func TestRenderGolden(t *testing.T) {
+	// A pipeline running from 10:00:00 to 10:04:12 wall-clock: build 10:00–10:02:30,
+	// test 10:01:42–10:04:12 (overlapping, so the span is 4m 12s, not their sum).
+	base := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
 	d := Data{
 		PipelineID:        12345,
 		Status:            "success",
 		ThrottleWarnRatio: 0.25,
 		Jobs: []JobReport{
-			{Stage: "build", Name: "compile", Usage: &metrics.JobUsage{
-				CPUSeconds:         42.5,
-				PeakMemoryBytes:    412 * 1024 * 1024,
-				ThrottledRatio:     0.41,
-				NetworkRxBytes:     8 * 1024 * 1024,
-				NetworkTxBytes:     3 * 1024 * 1024,
-				CPURequestCores:    0.25,
-				CPULimitCores:      0.5,
-				MemoryRequestBytes: 256 * 1024 * 1024,
-				MemoryLimitBytes:   512 * 1024 * 1024,
-			}},
-			{Stage: "test", Name: "unit", Usage: &metrics.JobUsage{
-				CPUSeconds:         18,
-				PeakMemoryBytes:    150 * 1024 * 1024,
-				ThrottledRatio:     0.02,
-				NetworkRxBytes:     1024 * 1024,
-				NetworkTxBytes:     256 * 1024,
-				CPURequestCores:    0.1,
-				CPULimitCores:      1,
-				MemoryRequestBytes: 128 * 1024 * 1024,
-				MemoryLimitBytes:   256 * 1024 * 1024,
-			}},
+			{Stage: "build", Name: "compile",
+				StartedAt:  base,
+				FinishedAt: base.Add(2*time.Minute + 30*time.Second),
+				Usage: &metrics.JobUsage{
+					CPUSeconds:         42.5,
+					PeakMemoryBytes:    412 * 1024 * 1024,
+					ThrottledRatio:     0.41,
+					NetworkRxBytes:     8 * 1024 * 1024,
+					NetworkTxBytes:     3 * 1024 * 1024,
+					DiskReadBytes:      600 * 1024 * 1024,
+					DiskWriteBytes:     220 * 1024 * 1024,
+					CPURequestCores:    0.25,
+					CPULimitCores:      0.5,
+					MemoryRequestBytes: 256 * 1024 * 1024,
+					MemoryLimitBytes:   512 * 1024 * 1024,
+				}},
+			{Stage: "test", Name: "unit",
+				StartedAt:  base.Add(102 * time.Second),
+				FinishedAt: base.Add(4*time.Minute + 12*time.Second),
+				Usage: &metrics.JobUsage{
+					CPUSeconds:         18,
+					PeakMemoryBytes:    150 * 1024 * 1024,
+					ThrottledRatio:     0.02,
+					NetworkRxBytes:     1024 * 1024,
+					NetworkTxBytes:     256 * 1024,
+					DiskReadBytes:      120 * 1024 * 1024,
+					DiskWriteBytes:     40 * 1024 * 1024,
+					CPURequestCores:    0.1,
+					CPULimitCores:      1,
+					MemoryRequestBytes: 128 * 1024 * 1024,
+					MemoryLimitBytes:   256 * 1024 * 1024,
+				}},
 			{Stage: "deploy", Name: "staging", Usage: nil},
 		},
 	}
@@ -165,6 +179,58 @@ func TestRenderSummaryTotalsAcrossJobs(t *testing.T) {
 	}
 }
 
+func TestRenderPipelineDurationIsWallClock(t *testing.T) {
+	// Two overlapping jobs: span is earliest start → latest finish (3m 0s),
+	// never the sum of the two run windows.
+	base := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
+	d := Data{
+		PipelineID: 1,
+		Status:     "success",
+		Jobs: []JobReport{
+			{Stage: "build", Name: "a", StartedAt: base, FinishedAt: base.Add(2 * time.Minute),
+				Usage: &metrics.JobUsage{CPUSeconds: 1}},
+			{Stage: "test", Name: "b", StartedAt: base.Add(time.Minute), FinishedAt: base.Add(3 * time.Minute),
+				Usage: &metrics.JobUsage{CPUSeconds: 1}},
+		},
+	}
+	out := mustRender(t, d)
+	if !strings.Contains(out, "| Pipeline duration | 3m 00s |") {
+		t.Errorf("expected wall-clock duration row of 3m 00s, got:\n%s", out)
+	}
+}
+
+func TestRenderNoDurationRowWithoutTimings(t *testing.T) {
+	// Jobs with usage but no run window (zero times): the duration row must be
+	// omitted, never rendered as a fabricated 0s.
+	d := Data{
+		PipelineID: 1,
+		Status:     "success",
+		Jobs:       []JobReport{{Stage: "build", Name: "a", Usage: &metrics.JobUsage{CPUSeconds: 1}}},
+	}
+	out := mustRender(t, d)
+	if strings.Contains(out, "Pipeline duration") {
+		t.Errorf("duration row must be omitted when no job carries timing, got:\n%s", out)
+	}
+}
+
+func TestRenderSummaryDiskTotals(t *testing.T) {
+	d := Data{
+		PipelineID: 1,
+		Status:     "success",
+		Jobs: []JobReport{
+			{Stage: "build", Name: "a", Usage: &metrics.JobUsage{DiskReadBytes: 1 * 1024 * 1024, DiskWriteBytes: 512 * 1024}},
+			{Stage: "test", Name: "b", Usage: &metrics.JobUsage{DiskReadBytes: 3 * 1024 * 1024, DiskWriteBytes: 512 * 1024}},
+		},
+	}
+	out := mustRender(t, d)
+	if !strings.Contains(out, "| Disk read | 4.0 MiB |") {
+		t.Errorf("expected summed disk read of 4.0 MiB, got:\n%s", out)
+	}
+	if !strings.Contains(out, "| Disk write | 1.0 MiB |") {
+		t.Errorf("expected summed disk write of 1.0 MiB, got:\n%s", out)
+	}
+}
+
 func TestRenderDetailsRowPerJob(t *testing.T) {
 	d := Data{
 		PipelineID:        7,
@@ -177,6 +243,8 @@ func TestRenderDetailsRowPerJob(t *testing.T) {
 				ThrottledRatio:     0.05,
 				NetworkRxBytes:     1024 * 1024,
 				NetworkTxBytes:     2 * 1024 * 1024,
+				DiskReadBytes:      4 * 1024 * 1024,
+				DiskWriteBytes:     512 * 1024,
 				CPURequestCores:    0.1,
 				CPULimitCores:      0.5,
 				MemoryRequestBytes: 128 * 1024 * 1024,
@@ -194,6 +262,7 @@ func TestRenderDetailsRowPerJob(t *testing.T) {
 		"100m / 500m",           // CPU request/limit as millicores (exact)
 		"5%",                    // throttled percent
 		"1.0 MiB / 2.0 MiB",     // network rx/tx
+		"4.0 MiB / 512.0 KiB",   // disk read/write
 	} {
 		if !strings.Contains(line, want) {
 			t.Errorf("job row missing %q in:\n%s", want, line)
