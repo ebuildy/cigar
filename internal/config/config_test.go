@@ -224,3 +224,45 @@ func TestLoadAdviceThresholds(t *testing.T) {
 		}
 	})
 }
+
+func TestNameDerivation(t *testing.T) {
+	cases := []struct {
+		key, env, flag string
+	}{
+		{"gitlab.url", "GITLAB_URL", "gitlab-url"},
+		{"prometheus.scrape_interval", "PROMETHEUS_SCRAPE_INTERVAL", "prometheus-scrape-interval"},
+		{"pod_resolver", "POD_RESOLVER", "pod-resolver"},
+		{"webhook.auth_methods", "WEBHOOK_AUTH_METHODS", "webhook-auth-methods"},
+		{"report.throttle_warn_ratio", "REPORT_THROTTLE_WARN_RATIO", "report-throttle-warn-ratio"},
+		{"log.level", "LOG_LEVEL", "log-level"},
+	}
+	for _, c := range cases {
+		if got := envName(c.key); got != c.env {
+			t.Errorf("envName(%q) = %q, want %q", c.key, got, c.env)
+		}
+		if got := flagName(c.key); got != c.flag {
+			t.Errorf("flagName(%q) = %q, want %q", c.key, got, c.flag)
+		}
+	}
+}
+
+func TestSettingsCoverAllKeys(t *testing.T) {
+	want := []string{
+		"gitlab.url", "prometheus.url", "prometheus.scrape_interval", "pod_resolver",
+		"webhook.auth_methods", "report.throttle_warn_ratio", "report.long_job_duration",
+		"report.memory_pressure_ratio", "commands.enabled", "commands.chart_format",
+		"server.listen_addr", "server.ops_addr", "log.level",
+	}
+	got := map[string]bool{}
+	for _, s := range settings {
+		got[s.key] = true
+	}
+	if len(got) != len(want) {
+		t.Fatalf("settings has %d keys, want %d", len(got), len(want))
+	}
+	for _, k := range want {
+		if !got[k] {
+			t.Errorf("settings missing key %q", k)
+		}
+	}
+}

@@ -10,6 +10,42 @@ import (
 	"time"
 )
 
+// setting is one non-secret configuration knob. env and flag names are derived
+// from key so the three forms (yaml/env/flag) can never drift.
+type setting struct {
+	key   string // viper key, e.g. "prometheus.scrape_interval"
+	def   string // default value (string; viper/Load coerce as needed)
+	usage string // CLI flag help text
+}
+
+// settings is the canonical list of non-secret knobs. Secrets are env-only and
+// are NOT listed here.
+var settings = []setting{
+	{"gitlab.url", "https://gitlab.com", "GitLab instance base URL"},
+	{"prometheus.url", "", "Prometheus base URL (cadvisor + kube-state-metrics)"},
+	{"prometheus.scrape_interval", "30s", "Prometheus scrape interval; query windows are padded by one interval"},
+	{"pod_resolver", "trace", "Pod-correlation strategy: trace or prometheus"},
+	{"webhook.auth_methods", "secret", "Ordered webhook auth methods: secret,signature"},
+	{"report.throttle_warn_ratio", "0.25", "Throttled-periods ratio above which a job gets a warning"},
+	{"report.long_job_duration", "10m", "Job duration above which advice suggests splitting the job"},
+	{"report.memory_pressure_ratio", "0.9", "Peak-memory-to-limit ratio above which OOMKill risk is warned"},
+	{"commands.enabled", "false", "Enable interactive report commands"},
+	{"commands.chart_format", "png", "Chart format for command replies: png, svg or markdown"},
+	{"server.listen_addr", ":8080", "Webhook listen address"},
+	{"server.ops_addr", ":8081", "Health/metrics (ops) listen address"},
+	{"log.level", "info", "Log verbosity: debug, info, warn or error"},
+}
+
+// envName maps a viper key to its env var: uppercase, dots -> underscores.
+func envName(key string) string {
+	return strings.ToUpper(strings.ReplaceAll(key, ".", "_"))
+}
+
+// flagName maps a viper key to its CLI flag: kebab-case, dots and underscores -> dashes.
+func flagName(key string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(key, ".", "-"), "_", "-")
+}
+
 type Config struct {
 	WebhookSecret       string
 	WebhookSigningToken string
