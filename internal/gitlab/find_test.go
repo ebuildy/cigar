@@ -1,13 +1,9 @@
-package main
+package gitlab
 
-import (
-	"testing"
-
-	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/gitlab"
-)
+import "testing"
 
 func TestFindJob(t *testing.T) {
-	jobs := []gitlab.Job{
+	jobs := []Job{
 		{ID: 101, Name: "build"},
 		{ID: 102, Name: "test"},
 		{ID: 103, Name: "42"}, // a job literally named "42"
@@ -23,15 +19,16 @@ func TestFindJob(t *testing.T) {
 		{name: "numeric ID wins over same-looking name", sel: "103", wantID: 103, wantOK: true},
 		{name: "falls back to name when ID absent", sel: "42", wantID: 103, wantOK: true},
 		{name: "not found", sel: "deploy", wantOK: false},
+		{name: "empty selector", sel: "", wantOK: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			j, ok := findJob(jobs, tt.sel)
+			j, ok := FindJob(jobs, tt.sel)
 			if ok != tt.wantOK {
-				t.Fatalf("findJob(%q) ok = %v, want %v", tt.sel, ok, tt.wantOK)
+				t.Fatalf("FindJob(%q) ok = %v, want %v", tt.sel, ok, tt.wantOK)
 			}
 			if ok && j.ID != tt.wantID {
-				t.Fatalf("findJob(%q) = job %d, want %d", tt.sel, j.ID, tt.wantID)
+				t.Fatalf("FindJob(%q) = job %d, want %d", tt.sel, j.ID, tt.wantID)
 			}
 		})
 	}
