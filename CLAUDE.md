@@ -90,14 +90,23 @@ Either way, always exclude the `POD`/pause container (`container!="", container!
 - Find MR via pipeline payload (`merge_request` field) or `GET /projects/:id/merge_requests?pipeline_id=`; if none → skip silently.
 - Idempotent comment: search existing MR notes for the HTML marker `<!-- ci-resources-bot -->`; update that note instead of creating a new one.
 
-### Config (env only, 12-factor)
+### Config (config.yaml + env + flags)
 
-`AUTH_METHODS` (default `secret`), `WEBHOOK_SECRET`, `WEBHOOK_SIGNING_TOKEN`, `GITLAB_URL`, `GITLAB_TOKEN`, `PROMETHEUS_URL`, `POD_RESOLVER` (default `trace`; `trace` parses the job's GitLab trace for the `Running on <pod> via …` line, `prometheus` joins `kube_pod_labels{label_job_id}`), `THROTTLE_WARN_RATIO` (default `0.25`), `SCRAPE_INTERVAL` (default `30s`), `LISTEN_ADDR`, `LOG_LEVEL` (default `info`; also settable via the `--log-level` root flag, which takes precedence). Fail fast at startup on missing required vars. `WEBHOOK_SECRET` is required only when `secret` is an enabled auth method; `WEBHOOK_SIGNING_TOKEN` is required only when `signature` is an enabled auth method. Both are required by `serve` only — `bot run` works without either.
+Configuration is a grouped `config.yaml` loaded via `spf13/viper`, with env vars
+and CLI flags overriding it (precedence: **flag > env > file > default**). Every
+non-secret setting derives its three forms from one yaml path:
+`group.key` → `GROUP_KEY` env → `--group-key` flag (see `internal/config`'s
+`settings` table — the single source of truth). File discovery: `--config` /
+`$CIGAR_CONFIG`, else `./config.yaml`, else `/etc/cigar/config.yaml`; missing →
+env + defaults. Secrets are **environment-only**, never in the file:
+`WEBHOOK_SECRET`, `WEBHOOK_SIGNING_TOKEN`, `GITLAB_TOKEN`, `COMMANDS_SIGNING_KEY`.
+`WEBHOOK_SECRET`/`WEBHOOK_SIGNING_TOKEN` are required by `serve` only, per enabled
+auth method; `bot run` needs neither.
 
 ## Go conventions
 
 - Go ≥ 1.26, modules; `go.mod` module path `gitlab.com/<group>/gitlab-ci-resources-bot`.
-- Standard library first; approved deps: `gofiber/fiber/v3` (HTTP server), `spf13/cobra` (CLI), `client-go` (GitLab), `prometheus/client_golang` (API + own metrics), `go.uber.org/zap` for logging (structured JSON to stdout).
+- Standard library first; approved deps: `gofiber/fiber/v3` (HTTP server), `spf13/cobra` (CLI), `spf13/viper` (config), `client-go` (GitLab), `prometheus/client_golang` (API + own metrics), `go.uber.org/zap` for logging (structured JSON to stdout).
 - Logging: `go.uber.org/zap`, JSON encoding, written to **stdout**. The level is a persistent root flag `--log-level` (`debug`/`info`/`warn`/`error`), defaulting to `$LOG_LEVEL` then `info`; the root command builds the logger in `PersistentPreRunE` (`cmd/bot/deps.go:newLogger`) and installs it via `zap.ReplaceGlobals`. Pass `*zap.Logger` down through constructors; use typed fields (`zap.String`, `zap.Int64`, `zap.Error`), never loose key/value pairs. Tests use `zap.NewNop()`.
 - Errors: wrap with `fmt.Errorf("...: %w", err)`; no `panic` outside `main`.
 - Context everywhere: every outbound call takes `context.Context` with timeout.

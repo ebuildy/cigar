@@ -69,31 +69,41 @@ bot advise --project 7 12345      # print resource-usage recommendations for the
 
 ## Configuration
 
-Environment variables only (12-factor). The bot fails fast at startup if a required variable is missing.
+cigar reads a **`config.yaml`** file (see [`config.yaml`](config.yaml) at the repo
+root for a documented sample). Every non-secret setting is overridable by an
+environment variable and a CLI flag under one rule:
 
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `AUTH_METHODS` | | `secret` | Ordered, comma-separated webhook auth methods: `secret`, `signature`. First method that authenticates wins |
-| `WEBHOOK_SECRET` | ✅ (`serve` only, if `secret` enabled) | — | Value GitLab sends in `X-Gitlab-Token`; compared in constant time |
-| `WEBHOOK_SIGNING_TOKEN` | ✅ (`serve` only, if `signature` enabled) | — | GitLab signing token (`whsec_...`); verifies the HMAC-SHA256 `webhook-signature` header |
-| `GITLAB_TOKEN` | ✅ | — | Project/group access token, `api` scope, least privilege |
-| `PROMETHEUS_URL` | ✅ | — | Prometheus base URL (cadvisor + kube-state-metrics scraped) |
-| `POD_RESOLVER` | | `trace` | Pod-correlation strategy: `trace` (parse the job's GitLab trace `Running on <pod> via …` line) or `prometheus` (join `kube_pod_labels{label_job_id}`) |
-| `GITLAB_URL` | | `https://gitlab.com` | GitLab instance base URL |
-| `THROTTLE_WARN_RATIO` | | `0.25` | Throttled-periods ratio above which a job gets a ⚠️ warning |
-| `SCRAPE_INTERVAL` | | `30s` | Prometheus scrape interval; query windows are padded by one interval |
-| `LONG_JOB_DURATION` | | `10m` | Job duration above which `advise` suggests splitting the job |
-| `MEMORY_PRESSURE_RATIO` | | `0.9` | Peak-memory-to-limit ratio above which `advise` warns about OOMKill risk |
-| `LISTEN_ADDR` | | `:8080` | Webhook listen address |
-| `OPS_ADDR` | | `:8081` | Health (`/healthz`, `/readyz`) and metrics (`/metrics`) address |
-| `LOG_LEVEL` | | `info` | `debug`, `info`, `warn`, `error` — JSON logs to stdout via [zap](https://github.com/uber-go/zap); also settable per-invocation with the `--log-level` flag |
-| `COMMANDS_ENABLED` | | `false` | Turn on [interactive report commands](docs/usage.md#4-interactive-report-commands) (reply with `help` / `details [job\|pod] <name>` / `advise [<job>]` on the bot's own MR report comment) |
-| `COMMANDS_SIGNING_KEY` | ✅ (`serve` only, if `COMMANDS_ENABLED=true`) | — | HMAC key signing the report marker; must be identical across all replicas |
-| `CHART_FORMAT` | | `png` | Image format for `details` charts: `png` (inline-renders reliably in GitLab), `svg`, or `markdown` (a pure-text ASCII line chart embedded in the reply — no upload) |
+> **`group.key`** in the file  →  **`GROUP_KEY`** env var  →  **`--group-key`** flag
+> — precedence: **flag > env > file > default**.
+
+The file is found via `--config` / `$CIGAR_CONFIG`, else `./config.yaml`, else
+`/etc/cigar/config.yaml`; if none exists, env + defaults are used (so `bot run`
+works with just env).
+
+| yaml path | env | default | notes |
+|---|---|---|---|
+| `gitlab.url` | `GITLAB_URL` | `https://gitlab.com` | GitLab instance base URL |
+| `prometheus.url` | `PROMETHEUS_URL` | — (required) | cadvisor + kube-state-metrics scraped |
+| `prometheus.scrape_interval` | `PROMETHEUS_SCRAPE_INTERVAL` | `30s` | query windows padded by one interval |
+| `pod_resolver` | `POD_RESOLVER` | `trace` | `trace` or `prometheus` |
+| `webhook.auth_methods` | `WEBHOOK_AUTH_METHODS` | `secret` | ordered: `secret`, `signature` |
+| `report.throttle_warn_ratio` | `REPORT_THROTTLE_WARN_RATIO` | `0.25` | ⚠️ warning threshold |
+| `report.long_job_duration` | `REPORT_LONG_JOB_DURATION` | `10m` | advice: split long jobs |
+| `report.memory_pressure_ratio` | `REPORT_MEMORY_PRESSURE_RATIO` | `0.9` | advice: OOMKill risk |
+| `commands.enabled` | `COMMANDS_ENABLED` | `false` | interactive report commands |
+| `commands.chart_format` | `COMMANDS_CHART_FORMAT` | `png` | `png`, `svg` or `markdown` |
+| `server.listen_addr` | `SERVER_LISTEN_ADDR` | `:8080` | webhook listen address |
+| `server.ops_addr` | `SERVER_OPS_ADDR` | `:8081` | health/metrics address |
+| `log.level` | `LOG_LEVEL` | `info` | `--log-level` also available |
+
+**Secrets — environment only, never in the file:** `WEBHOOK_SECRET` (`serve`,
+if `secret` enabled), `WEBHOOK_SIGNING_TOKEN` (`serve`, if `signature` enabled),
+`GITLAB_TOKEN` (always), `COMMANDS_SIGNING_KEY` (`serve`, if commands enabled).
+`bot run` needs neither webhook secret.
 
 ### Migrating to signing-token auth
 
-To move off the legacy secret token: set `AUTH_METHODS=secret,signature` with both credentials configured, migrate your GitLab webhooks to the signing token, then switch to `AUTH_METHODS=signature`.
+To move off the legacy secret token: set `WEBHOOK_AUTH_METHODS=secret,signature` with both credentials configured, migrate your GitLab webhooks to the signing token, then switch to `WEBHOOK_AUTH_METHODS=signature`.
 
 See [`docs/usage.md`](docs/usage.md) for the full deployment, GitLab-configuration, testing, and interactive-commands guide.
 
@@ -129,7 +139,7 @@ Releases are handled by [GoReleaser](https://goreleaser.com): push a `v*` tag an
 
 ## Security
 
-- Webhook auth via `AUTH_METHODS` (default `secret`): `X-Gitlab-Token` validated with `subtle.ConstantTimeCompare`, and/or the GitLab signing token's HMAC-SHA256 `webhook-signature` header (5-minute replay window). Methods are tried in order; none authenticating gets a bare `401`.
+- Webhook auth via `WEBHOOK_AUTH_METHODS` (default `secret`): `X-Gitlab-Token` validated with `subtle.ConstantTimeCompare`, and/or the GitLab signing token's HMAC-SHA256 `webhook-signature` header (5-minute replay window). Methods are tried in order; none authenticating gets a bare `401`.
 - Only `X-Gitlab-Event: Pipeline Hook` is processed; other events get `200` so GitLab doesn't disable the hook.
 - Request bodies capped at 1 MiB via Fiber's `BodyLimit` (`413` beyond that); server read/write timeouts set.
 - TLS terminates at the ingress; the pod listens plain HTTP on `:8080`, ops on `:8081`.
@@ -141,11 +151,15 @@ Helm chart in `deploy/chart/cigar`: Deployment (2 replicas, PDB), Service, Ingre
 
 ```sh
 helm install cigar deploy/chart/cigar \
-  --set config.prometheusUrl=http://prometheus-operated.monitoring.svc:9090 \
+  --set config.prometheus.url=http://prometheus-operated.monitoring.svc:9090 \
   --set secrets.existingSecret=cigar   # Secret with keys WEBHOOK_SECRET + WEBHOOK_SIGNING_TOKEN + GITLAB_TOKEN
 ```
 
-All bot env vars map to `config.*` values; secrets come from an existing Secret (recommended) or `secrets.webhookSecret`/`secrets.signingToken`/`secrets.gitlabToken`. Set `config.authMethods` to enable signing-token auth (e.g. `secret,signature` during migration, then `signature`). The NetworkPolicy defaults allow egress to any host on 443 (gitlab.com has no stable CIDR) and to an in-cluster Prometheus in the `monitoring` namespace — tighten `networkPolicy.*` to your environment.
+The chart renders `config.*` values into a ConfigMap mounted at
+`/etc/cigar/config.yaml`; secrets come from an existing Secret (recommended) or
+`secrets.webhookSecret`/`secrets.signingToken`/`secrets.gitlabToken`. Enable
+signing-token auth via `config.webhook.authMethods` (e.g. `{secret,signature}`
+during migration, then `{signature}`). The NetworkPolicy defaults allow egress to any host on 443 (gitlab.com has no stable CIDR) and to an in-cluster Prometheus in the `monitoring` namespace — tighten `networkPolicy.*` to your environment.
 
 ## Status
 
