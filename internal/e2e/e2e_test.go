@@ -4,6 +4,7 @@
 package e2e
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -20,6 +21,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"go.uber.org/zap"
 
+	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/advice"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/command"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/correlate"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/gitlab"
@@ -244,10 +246,19 @@ func harness(t *testing.T, podResolver string) (*fiber.App, *mockGitLab, *mockPr
 	// which case ProcessPipeline resolves the MR from the branch ref.
 	ctx := t.Context()
 	q := make(chan webhook.Event, 8)
+	eng, err := advice.New(advice.Thresholds{
+		ThrottleWarnRatio:   0.25,
+		LongJob:             10 * time.Minute,
+		MemoryPressureRatio: 0.9,
+	}, nil)
+	if err != nil {
+		t.Fatalf("advice engine: %v", err)
+	}
 	cmdHandler := &command.Handler{
 		GitLab:     glClient,
 		Resolver:   resolver,
 		Series:     source, // *metrics.PromSource satisfies metrics.SeriesSource
+		Advisor:    e2eAdvisor{rep: rep, eng: eng},
 		SigningKey: []byte(commandsKey),
 		BotUserID:  555,
 		Log:        log,
@@ -497,5 +508,48 @@ func TestNoteCommandLoopGuard(t *testing.T) {
 	defer glMock.mu.Unlock()
 	if len(glMock.replies) != 0 {
 		t.Fatalf("replied to a marker-tagged (own) note; replies=%d", len(glMock.replies))
+	}
+}
+
+// e2eAdvisor adapts the reporter to command.Advisor, mirroring the adapter
+// `bot serve` wires in cmd/bot/advise.go.
+type e2eAdvisor struct {
+	rep *reporter.Reporter
+	eng *advice.Engine
+}
+
+func (a e2eAdvisor) Advise(ctx context.Context, projectID, pipelineID int64, jobFilter string) ([]advice.Advice, error) {
+	return a.rep.Advise(ctx, projectID, pipelineID, jobFilter, a.eng)
+}
+
+// TestNoteCommandAdvise drives the whole chain — Note Hook webhook, queue,
+// worker, command handler, reporter, advice engine — and asserts the reply
+// carries real recommendations.
+func TestNoteCommandAdvise(t *testing.T) {
+	app, glMock, _ := harness(t, "trace")
+	payload := fmt.Sprintf(`{
+		"object_kind":"note",
+		"object_attributes":{"id":79,"note":"advise","noteable_type":"MergeRequest","discussion_id":"disc1","author_id":9},
+		"project":{"id":%d},
+		"merge_request":{"iid":%d}
+	}`, projectID, mrIID)
+
+	postNoteWebhook(t, app, payload)
+	waitFor(t, "advice reply posted", func() bool {
+		glMock.mu.Lock()
+		defer glMock.mu.Unlock()
+		return len(glMock.replies) == 1
+	})
+
+	glMock.mu.Lock()
+	defer glMock.mu.Unlock()
+	reply := glMock.replies[0]
+	if glMock.uploads != 0 {
+		t.Fatalf("uploads = %d, want 0 (advice posts no charts)", glMock.uploads)
+	}
+	for _, want := range []string{"Advice for pipeline", "KUBERNETES_CPU_LIMIT", report.MarkerPrefix} {
+		if !strings.Contains(reply, want) {
+			t.Fatalf("reply missing %q:\n%s", want, reply)
+		}
 	}
 }
