@@ -9,40 +9,34 @@ image:
   # Overrides the image tag whose default is the chart appVersion.
   tag: ""
 
-# Bot configuration (maps 1:1 to the env vars documented in the README).
+# Bot configuration. Rendered into a ConfigMap as /etc/cigar/config.yaml.
+# Every key maps to an env var (GROUP_KEY) and a CLI flag (--group-key); the
+# file is the source, env/flags override. Secrets are NOT here — see secrets.*.
 config:
-  # GitLab instance base URL.
-  gitlabUrl: "https://gitlab.com"
-  # Prometheus base URL — must scrape cadvisor and kube-state-metrics.
-  prometheusUrl: "http://prometheus-operated.monitoring.svc:9090"
-  # Pod-correlation strategy: "trace" (parse the job's GitLab trace) or
-  # "prometheus" (join kube_pod_labels{label_job_id}).
+  gitlab:
+    url: "https://gitlab.com"
+  prometheus:
+    # Must scrape cadvisor and kube-state-metrics.
+    url: "http://prometheus-operated.monitoring.svc:9090"
+    scrapeInterval: "30s"
+  # Pod-correlation strategy: "trace" or "prometheus".
   podResolver: "trace"
-  # Throttled-periods ratio above which a job gets a throttling warning.
-  throttleWarnRatio: "0.25"
-  # Prometheus scrape interval; query windows are padded by one interval.
-  scrapeInterval: "30s"
-  # Job duration above which the advise command suggests splitting the job.
-  longJobDuration: "10m"
-  # Peak-memory-to-limit ratio above which the advise command warns about
-  # OOMKill risk.
-  memoryPressureRatio: "0.9"
-  # Chart format for `details` command replies: "png" (default, renders inline
-  # reliably in GitLab), "svg" (vector, but GitLab's inline SVG rendering is
-  # unreliable), or "markdown" (an ASCII line chart embedded in the reply).
-  chartFormat: "png"
-  # debug, info, warn, error.
-  logLevel: "info"
-  # AUTH_METHODS: ordered, comma-separated webhook auth methods (secret,signature).
-  # Empty defaults to "secret" (legacy X-Gitlab-Token).
-  authMethods: ""
-
-# Interactive report commands: reply to the bot's MR report comment with
-# "help" / "details [job|pod] <name>". Off by default.
-commands:
-  # COMMANDS_ENABLED. Requires secrets.commandsSigningKey (or the equivalent
-  # key in secrets.existingSecret) to be set.
-  enabled: false
+  webhook:
+    # Ordered auth methods; empty defaults to [secret]. e.g. [secret, signature].
+    authMethods: []
+  report:
+    throttleWarnRatio: "0.25"
+    longJobDuration: "10m"
+    memoryPressureRatio: "0.9"
+  commands:
+    # Interactive report commands. Requires secrets.commandsSigningKey when true.
+    enabled: false
+    chartFormat: "png"
+  server:
+    listenAddr: ":8080"
+    opsAddr: ":8081"
+  log:
+    level: "info"
 
 secrets:
   # Name of an existing Secret holding GITLAB_TOKEN plus whichever auth keys

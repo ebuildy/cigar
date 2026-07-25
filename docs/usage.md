@@ -9,6 +9,28 @@ This guide covers **deployment**, **GitLab configuration**, and **testing**.
 
 ---
 
+## Configuration
+
+cigar is configured by a `config.yaml` file, with env vars and CLI flags
+overriding it. The three forms of every non-secret setting derive from one yaml
+path: `group.key` → `GROUP_KEY` → `--group-key`. Precedence, highest first:
+
+```
+--flag  >  ENV_VAR  >  config.yaml  >  built-in default
+```
+
+**File discovery:** `--config <path>` or `$CIGAR_CONFIG`, else `./config.yaml`,
+else `/etc/cigar/config.yaml`. No file found → env + defaults only.
+
+**Secrets are environment-only** and never read from the file: `WEBHOOK_SECRET`,
+`WEBHOOK_SIGNING_TOKEN`, `GITLAB_TOKEN`, `COMMANDS_SIGNING_KEY`.
+
+See the annotated [`config.yaml`](../config.yaml) at the repo root for every key.
+In Kubernetes the Helm chart renders these into a ConfigMap mounted at
+`/etc/cigar/config.yaml`.
+
+---
+
 ## 1. Deployment
 
 ### Configuration (environment variables)
@@ -22,21 +44,21 @@ startup on missing/invalid required values.
 | `GITLAB_TOKEN` | **yes** | — | GitLab API token, `api` scope (create/update MR notes) |
 | `PROMETHEUS_URL` | **yes** | — | Prometheus base URL (cadvisor + kube-state-metrics) |
 | `POD_RESOLVER` | no | `trace` | Pod-correlation strategy: `trace` (parse the job's GitLab trace) or `prometheus` (join `kube_pod_labels{label_job_id}`) |
-| `AUTH_METHODS` | no | `secret` | Ordered, comma-separated webhook auth methods: `secret`, `signature` |
+| `WEBHOOK_AUTH_METHODS` | no | `secret` | Ordered, comma-separated webhook auth methods: `secret`, `signature` |
 | `WEBHOOK_SECRET` | when `secret` enabled | — | Legacy shared secret, compared against the `X-Gitlab-Token` header |
 | `WEBHOOK_SIGNING_TOKEN` | when `signature` enabled | — | GitLab signing token (`whsec_…`) used to verify the `webhook-signature` HMAC |
-| `THROTTLE_WARN_RATIO` | no | `0.25` | Throttled-periods ratio above which a warning is shown |
-| `SCRAPE_INTERVAL` | no | `30s` | Prometheus scrape interval; query windows are padded by one interval |
-| `LONG_JOB_DURATION` | no | `10m` | Job duration above which `advise` suggests splitting the job |
-| `MEMORY_PRESSURE_RATIO` | no | `0.9` | Peak-memory-to-limit ratio above which `advise` warns about OOMKill risk |
-| `LISTEN_ADDR` | no | `:8080` | Webhook HTTP listener |
-| `OPS_ADDR` | no | `:8081` | Ops listener: `/healthz`, `/readyz`, `/metrics` |
+| `REPORT_THROTTLE_WARN_RATIO` | no | `0.25` | Throttled-periods ratio above which a warning is shown |
+| `PROMETHEUS_SCRAPE_INTERVAL` | no | `30s` | Prometheus scrape interval; query windows are padded by one interval |
+| `REPORT_LONG_JOB_DURATION` | no | `10m` | Job duration above which `advise` suggests splitting the job |
+| `REPORT_MEMORY_PRESSURE_RATIO` | no | `0.9` | Peak-memory-to-limit ratio above which `advise` warns about OOMKill risk |
+| `SERVER_LISTEN_ADDR` | no | `:8080` | Webhook HTTP listener |
+| `SERVER_OPS_ADDR` | no | `:8081` | Ops listener: `/healthz`, `/readyz`, `/metrics` |
 | `LOG_LEVEL` | no | `info` | `debug` \| `info` \| `warn` \| `error` — structured JSON logs (zap) written to stdout; also settable per-invocation with the `--log-level` root flag, which takes precedence |
 | `COMMANDS_ENABLED` | no | `false` | Turn on [interactive report commands](#4-interactive-report-commands) (reply-driven `help` / `details`) |
 | `COMMANDS_SIGNING_KEY` | when `COMMANDS_ENABLED=true` | — | HMAC key signing the report marker; must be a stable random secret shared by every replica (`serve` only — `bot run` never needs it) |
-| `CHART_FORMAT` | no | `png` | Format for `details` charts: `png` (renders inline reliably in GitLab), `svg` (vector; GitLab's inline SVG rendering is unreliable), or `markdown` (an ASCII line chart embedded directly in the reply — no upload) |
+| `COMMANDS_CHART_FORMAT` | no | `png` | Format for `details` charts: `png` (renders inline reliably in GitLab), `svg` (vector; GitLab's inline SVG rendering is unreliable), or `markdown` (an ASCII line chart embedded directly in the reply — no upload) |
 
-**Webhook authentication.** `AUTH_METHODS` lists the enabled methods in priority
+**Webhook authentication.** `WEBHOOK_AUTH_METHODS` lists the enabled methods in priority
 order; the first one that authenticates a request wins, otherwise the request is
 rejected with `401`.
 
@@ -49,9 +71,9 @@ rejected with `401`.
   protection).
 
 `signature` is the recommended method; `secret` is GitLab's legacy scheme.
-For a zero-downtime migration, run `AUTH_METHODS=secret,signature` with both
+For a zero-downtime migration, run `WEBHOOK_AUTH_METHODS=secret,signature` with both
 credentials configured, move your hooks to a signing token, then switch to
-`AUTH_METHODS=signature`.
+`WEBHOOK_AUTH_METHODS=signature`.
 
 ### Deploy with Helm
 
@@ -63,9 +85,9 @@ recommended for production, an externally-managed `secrets.existingSecret`.
 ```sh
 # Example: signing-token auth, credentials in an existing Secret.
 helm upgrade --install cigar deploy/chart/cigar \
-  --set config.gitlabUrl=https://gitlab.example.com \
-  --set config.prometheusUrl=http://prometheus-server.monitoring.svc:80 \
-  --set config.authMethods=signature \
+  --set config.gitlab.url=https://gitlab.example.com \
+  --set config.prometheus.url=http://prometheus-server.monitoring.svc:80 \
+  --set config.webhook.authMethods=signature \
   --set secrets.existingSecret=cigar-secrets
 ```
 
@@ -105,7 +127,7 @@ kubectl -n cigar logs -f deploy/cigar
 ```
 
 `deploy-cigar.sh` mints and persists a stable `WEBHOOK_SIGNING_TOKEN` in
-`cigar-secrets`, deploys with `AUTH_METHODS=signature`, and sets a matching
+`cigar-secrets`, deploys with `WEBHOOK_AUTH_METHODS=signature`, and sets a matching
 `signing_token` on each project hook.
 
 ---
@@ -118,7 +140,7 @@ registration is per-project), configure a webhook:
 - **URL** → the bot's webhook endpoint, e.g.
   `https://cigar.example.com/webhook` (in-cluster: `http://cigar.cigar.svc.cluster.local:8080/webhook`).
 - **Trigger** → **Pipeline events** only.
-- **Authentication** → set the credential matching your `AUTH_METHODS`:
+- **Authentication** → set the credential matching your `WEBHOOK_AUTH_METHODS`:
   - **Signing token** (recommended): a `whsec_`-prefixed, base64 value equal to
     the bot's `WEBHOOK_SIGNING_TOKEN`. GitLab **rejects** a non-`whsec_` value
     (HTTP `422`).
@@ -264,7 +286,7 @@ comment (not as a new top-level comment):
 | `advise <job>` | Same, for one job — accepts a job name or numeric ID |
 
 Each `details` reply embeds three charts (uploaded to the MR) covering the
-target's run window. Rendered as PNG by default; set `CHART_FORMAT` to `svg`
+target's run window. Rendered as PNG by default; set `COMMANDS_CHART_FORMAT` to `svg`
 for vector images, or `markdown` for a pure-text ASCII line chart embedded
 right in the reply (no upload).
 
@@ -275,10 +297,10 @@ silent, and a pipeline with nothing to fix gets `You are all good dude!`.
 
 | Rule | Fires when |
 |---|---|
-| `cpu-throttle` | The job was throttled at or above `THROTTLE_WARN_RATIO` |
+| `cpu-throttle` | The job was throttled at or above `REPORT_THROTTLE_WARN_RATIO` |
 | `java-threads` | Throttled **and** the job trace shows a Maven/Gradle/Java build |
-| `long-job` | The job ran longer than `LONG_JOB_DURATION` |
-| `memory-pressure` | Peak memory reached `MEMORY_PRESSURE_RATIO` of the memory limit |
+| `long-job` | The job ran longer than `REPORT_LONG_JOB_DURATION` |
+| `memory-pressure` | Peak memory reached `REPORT_MEMORY_PRESSURE_RATIO` of the memory limit |
 
 The `java-threads` rule is the only one that reads the job's trace, and it is
 fetched only for jobs that were actually throttled — one extra API call per

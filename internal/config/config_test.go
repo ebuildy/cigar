@@ -6,6 +6,12 @@ import (
 	"time"
 )
 
+// loadEnv builds an env-only viper (no file, no flags) and loads it.
+func loadEnv(t *testing.T) (*Config, error) {
+	t.Helper()
+	return Load(New())
+}
+
 func TestParseAuthMethods(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -42,13 +48,104 @@ func TestParseAuthMethods(t *testing.T) {
 	}
 }
 
+func TestNameDerivation(t *testing.T) {
+	cases := []struct{ key, env, flag string }{
+		{"gitlab.url", "GITLAB_URL", "gitlab-url"},
+		{"prometheus.scrape_interval", "PROMETHEUS_SCRAPE_INTERVAL", "prometheus-scrape-interval"},
+		{"pod_resolver", "POD_RESOLVER", "pod-resolver"},
+		{"webhook.auth_methods", "WEBHOOK_AUTH_METHODS", "webhook-auth-methods"},
+		{"report.throttle_warn_ratio", "REPORT_THROTTLE_WARN_RATIO", "report-throttle-warn-ratio"},
+		{"log.level", "LOG_LEVEL", "log-level"},
+	}
+	for _, c := range cases {
+		if got := envName(c.key); got != c.env {
+			t.Errorf("envName(%q) = %q, want %q", c.key, got, c.env)
+		}
+		if got := flagName(c.key); got != c.flag {
+			t.Errorf("flagName(%q) = %q, want %q", c.key, got, c.flag)
+		}
+	}
+}
+
+func TestSettingsCoverAllKeys(t *testing.T) {
+	want := []string{
+		"gitlab.url", "prometheus.url", "prometheus.scrape_interval", "pod_resolver",
+		"webhook.auth_methods", "report.throttle_warn_ratio", "report.long_job_duration",
+		"report.memory_pressure_ratio", "commands.enabled", "commands.chart_format",
+		"server.listen_addr", "server.ops_addr", "log.level",
+	}
+	got := map[string]bool{}
+	for _, s := range settings {
+		got[s.key] = true
+	}
+	if len(got) != len(want) {
+		t.Fatalf("settings has %d keys, want %d", len(got), len(want))
+	}
+	for _, k := range want {
+		if !got[k] {
+			t.Errorf("settings missing key %q", k)
+		}
+	}
+}
+
+func TestLoadDefaults(t *testing.T) {
+	t.Setenv("GITLAB_TOKEN", "tok")
+	t.Setenv("PROMETHEUS_URL", "http://prom")
+	cfg, err := loadEnv(t)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.GitLabURL != "https://gitlab.com" {
+		t.Errorf("GitLabURL = %q, want default", cfg.GitLabURL)
+	}
+	if cfg.ScrapeInterval != 30*time.Second {
+		t.Errorf("ScrapeInterval = %v, want 30s", cfg.ScrapeInterval)
+	}
+	if cfg.ThrottleWarnRatio != 0.25 {
+		t.Errorf("ThrottleWarnRatio = %v, want 0.25", cfg.ThrottleWarnRatio)
+	}
+	if cfg.LongJobDuration != 10*time.Minute {
+		t.Errorf("LongJobDuration = %v, want 10m", cfg.LongJobDuration)
+	}
+	if cfg.MemoryPressureRatio != 0.9 {
+		t.Errorf("MemoryPressureRatio = %v, want 0.9", cfg.MemoryPressureRatio)
+	}
+	if cfg.PodResolver != "trace" {
+		t.Errorf("PodResolver = %q, want trace", cfg.PodResolver)
+	}
+	if cfg.ChartFormat != "png" {
+		t.Errorf("ChartFormat = %q, want png", cfg.ChartFormat)
+	}
+	if cfg.ListenAddr != ":8080" || cfg.OpsAddr != ":8081" {
+		t.Errorf("addrs = %q/%q, want :8080/:8081", cfg.ListenAddr, cfg.OpsAddr)
+	}
+	if !reflect.DeepEqual(cfg.AuthMethods, []string{"secret"}) {
+		t.Errorf("AuthMethods = %v, want [secret]", cfg.AuthMethods)
+	}
+}
+
+func TestLoadRequiredFields(t *testing.T) {
+	t.Run("missing GITLAB_TOKEN errors", func(t *testing.T) {
+		t.Setenv("PROMETHEUS_URL", "http://prom")
+		if _, err := loadEnv(t); err == nil {
+			t.Fatal("Load succeeded without GITLAB_TOKEN")
+		}
+	})
+	t.Run("missing PROMETHEUS_URL errors", func(t *testing.T) {
+		t.Setenv("GITLAB_TOKEN", "tok")
+		if _, err := loadEnv(t); err == nil {
+			t.Fatal("Load succeeded without PROMETHEUS_URL")
+		}
+	})
+}
+
 func TestLoadAuthFields(t *testing.T) {
 	t.Setenv("GITLAB_TOKEN", "tok")
 	t.Setenv("PROMETHEUS_URL", "http://prom")
 	t.Setenv("WEBHOOK_SIGNING_TOKEN", "whsec_abc")
-	t.Setenv("AUTH_METHODS", "signature,secret")
+	t.Setenv("WEBHOOK_AUTH_METHODS", "signature,secret")
 
-	cfg, err := Load()
+	cfg, err := loadEnv(t)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -67,7 +164,6 @@ func TestLoadChartFormat(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{name: "default is png", env: "", want: "png"},
 		{name: "explicit png", env: "png", want: "png"},
 		{name: "explicit svg", env: "svg", want: "svg"},
 		{name: "explicit markdown", env: "markdown", want: "markdown"},
@@ -79,12 +175,11 @@ func TestLoadChartFormat(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("GITLAB_TOKEN", "tok")
 			t.Setenv("PROMETHEUS_URL", "http://prom")
-			t.Setenv("CHART_FORMAT", tt.env)
-
-			cfg, err := Load()
+			t.Setenv("COMMANDS_CHART_FORMAT", tt.env)
+			cfg, err := loadEnv(t)
 			if tt.wantErr {
 				if err == nil {
-					t.Fatalf("Load() with CHART_FORMAT=%q: want error, got %+v", tt.env, cfg)
+					t.Fatalf("Load() with COMMANDS_CHART_FORMAT=%q: want error, got %+v", tt.env, cfg)
 				}
 				return
 			}
@@ -105,7 +200,6 @@ func TestLoadPodResolver(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{name: "default is trace", env: "", want: "trace"},
 		{name: "explicit trace", env: "trace", want: "trace"},
 		{name: "explicit prometheus", env: "prometheus", want: "prometheus"},
 		{name: "unknown value errors", env: "bogus", wantErr: true},
@@ -115,8 +209,7 @@ func TestLoadPodResolver(t *testing.T) {
 			t.Setenv("GITLAB_TOKEN", "tok")
 			t.Setenv("PROMETHEUS_URL", "http://prom")
 			t.Setenv("POD_RESOLVER", tt.env)
-
-			cfg, err := Load()
+			cfg, err := loadEnv(t)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("Load() with POD_RESOLVER=%q: want error, got %+v", tt.env, cfg)
@@ -137,7 +230,7 @@ func TestLoadCommandsConfig(t *testing.T) {
 	t.Run("defaults off with no key", func(t *testing.T) {
 		t.Setenv("GITLAB_TOKEN", "tok")
 		t.Setenv("PROMETHEUS_URL", "http://prom")
-		cfg, err := Load()
+		cfg, err := loadEnv(t)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -153,7 +246,7 @@ func TestLoadCommandsConfig(t *testing.T) {
 		t.Setenv("PROMETHEUS_URL", "http://prom")
 		t.Setenv("COMMANDS_ENABLED", "true")
 		t.Setenv("COMMANDS_SIGNING_KEY", "s3cret")
-		cfg, err := Load()
+		cfg, err := loadEnv(t)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -168,33 +261,19 @@ func TestLoadCommandsConfig(t *testing.T) {
 		t.Setenv("GITLAB_TOKEN", "tok")
 		t.Setenv("PROMETHEUS_URL", "http://prom")
 		t.Setenv("COMMANDS_ENABLED", "maybe")
-		if _, err := Load(); err == nil {
+		if _, err := loadEnv(t); err == nil {
 			t.Fatal("Load succeeded, want error on COMMANDS_ENABLED=maybe")
 		}
 	})
 }
 
 func TestLoadAdviceThresholds(t *testing.T) {
-	t.Setenv("GITLAB_TOKEN", "tok")
-	t.Setenv("PROMETHEUS_URL", "http://prom")
-
-	t.Run("defaults", func(t *testing.T) {
-		cfg, err := Load()
-		if err != nil {
-			t.Fatalf("Load: %v", err)
-		}
-		if cfg.LongJobDuration != 10*time.Minute {
-			t.Errorf("LongJobDuration = %v, want 10m", cfg.LongJobDuration)
-		}
-		if cfg.MemoryPressureRatio != 0.9 {
-			t.Errorf("MemoryPressureRatio = %v, want 0.9", cfg.MemoryPressureRatio)
-		}
-	})
-
 	t.Run("overrides", func(t *testing.T) {
-		t.Setenv("LONG_JOB_DURATION", "25m")
-		t.Setenv("MEMORY_PRESSURE_RATIO", "0.75")
-		cfg, err := Load()
+		t.Setenv("GITLAB_TOKEN", "tok")
+		t.Setenv("PROMETHEUS_URL", "http://prom")
+		t.Setenv("REPORT_LONG_JOB_DURATION", "25m")
+		t.Setenv("REPORT_MEMORY_PRESSURE_RATIO", "0.75")
+		cfg, err := loadEnv(t)
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
@@ -205,22 +284,38 @@ func TestLoadAdviceThresholds(t *testing.T) {
 			t.Errorf("MemoryPressureRatio = %v, want 0.75", cfg.MemoryPressureRatio)
 		}
 	})
-
 	t.Run("invalid values are rejected", func(t *testing.T) {
 		for _, tc := range []struct{ key, val string }{
-			{"LONG_JOB_DURATION", "soon"},
-			{"LONG_JOB_DURATION", "0s"},
-			{"LONG_JOB_DURATION", "-5m"},
-			{"MEMORY_PRESSURE_RATIO", "high"},
-			{"MEMORY_PRESSURE_RATIO", "0"},
-			{"MEMORY_PRESSURE_RATIO", "1.5"},
+			{"REPORT_LONG_JOB_DURATION", "soon"},
+			{"REPORT_LONG_JOB_DURATION", "0s"},
+			{"REPORT_LONG_JOB_DURATION", "-5m"},
+			{"REPORT_MEMORY_PRESSURE_RATIO", "high"},
+			{"REPORT_MEMORY_PRESSURE_RATIO", "0"},
+			{"REPORT_MEMORY_PRESSURE_RATIO", "1.5"},
+			{"REPORT_THROTTLE_WARN_RATIO", "nope"},
+			{"REPORT_THROTTLE_WARN_RATIO", "1.5"},
+			{"PROMETHEUS_SCRAPE_INTERVAL", "later"},
 		} {
 			t.Run(tc.key+"="+tc.val, func(t *testing.T) {
+				t.Setenv("GITLAB_TOKEN", "tok")
+				t.Setenv("PROMETHEUS_URL", "http://prom")
 				t.Setenv(tc.key, tc.val)
-				if _, err := Load(); err == nil {
+				if _, err := loadEnv(t); err == nil {
 					t.Fatalf("Load accepted %s=%q", tc.key, tc.val)
 				}
 			})
+		}
+	})
+	t.Run("throttle zero is valid", func(t *testing.T) {
+		t.Setenv("GITLAB_TOKEN", "tok")
+		t.Setenv("PROMETHEUS_URL", "http://prom")
+		t.Setenv("REPORT_THROTTLE_WARN_RATIO", "0")
+		cfg, err := loadEnv(t)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.ThrottleWarnRatio != 0 {
+			t.Errorf("ThrottleWarnRatio = %v, want 0", cfg.ThrottleWarnRatio)
 		}
 	})
 }
