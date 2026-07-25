@@ -29,7 +29,7 @@ func newAdviseCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("invalid pipeline ID %q", args[0])
 			}
-			cfg, err := config.Load()
+			cfg, err := config.Load(cfgViper)
 			if err != nil {
 				return err
 			}

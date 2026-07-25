@@ -44,7 +44,7 @@ func (q queue) Enqueue(ev webhook.Event) bool {
 }
 
 func serve(ctx context.Context) error {
-	cfg, err := config.Load()
+	cfg, err := config.Load(cfgViper)
 	if err != nil {
 		return err
 	}

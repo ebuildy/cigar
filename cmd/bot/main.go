@@ -14,6 +14,9 @@ import (
 	"golang.org/x/term"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+
+	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/config"
 )
 
 // version is stamped by goreleaser via -ldflags "-X main.version=...".
@@ -22,6 +25,10 @@ var version = "dev"
 // logger is the process-wide zap logger built from the --log-level flag in the
 // root command's PersistentPreRunE, before any subcommand runs.
 var logger *zap.Logger
+
+// cfgViper is the resolved configuration built once in the root
+// PersistentPreRunE and consumed by the serve/run subcommands.
+var cfgViper *viper.Viper
 
 var coloredBanner = []string{
 	"\x1b[38;5;208m   /\\             /\\\x1b[38;5;214m                      *\x1b[0m",
@@ -60,7 +67,6 @@ var plainBanner = []string{
 }
 
 func main() {
-	var logLevel string
 	root := &cobra.Command{
 		Use:           "bot",
 		Short:         "Posts CI pipeline resource-usage reports as GitLab MR comments",
@@ -71,7 +77,12 @@ func main() {
 			if term.IsTerminal(int(os.Stdout.Fd())) {
 				_, _ = os.Stdout.WriteString(banner(true))
 			}
-			log, err := newLogger(logLevel)
+			v, err := config.Resolve(cmd)
+			if err != nil {
+				return err
+			}
+			cfgViper = v
+			log, err := newLogger(v.GetString("log.level"))
 			if err != nil {
 				return err
 			}
@@ -79,8 +90,7 @@ func main() {
 			return nil
 		},
 	}
-	root.PersistentFlags().StringVar(&logLevel, "log-level", envOr("LOG_LEVEL", "info"),
-		"log verbosity: debug, info, warn or error (defaults to $LOG_LEVEL, then info)")
+	config.BindFlags(root)
 	root.AddCommand(newServeCmd(), newRunCmd(), newAdviseCmd())
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -98,15 +108,6 @@ func main() {
 	if logger != nil {
 		_ = logger.Sync()
 	}
-}
-
-// envOr returns the value of the named environment variable, or def when unset
-// or empty. Used to default the --log-level flag from $LOG_LEVEL.
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
 }
 
 // banner returns the banner. Colors are dropped when color is false
