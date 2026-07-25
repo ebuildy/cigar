@@ -92,6 +92,10 @@ spec:
               value: {{ .Values.config.throttleWarnRatio | quote }}
             - name: SCRAPE_INTERVAL
               value: {{ .Values.config.scrapeInterval | quote }}
+            - name: LONG_JOB_DURATION
+              value: {{ .Values.config.longJobDuration | quote }}
+            - name: MEMORY_PRESSURE_RATIO
+              value: {{ .Values.config.memoryPressureRatio | quote }}
             - name: CHART_FORMAT
               value: {{ .Values.config.chartFormat | quote }}
             - name: LOG_LEVEL

@@ -61,6 +61,8 @@ bot serve                          # run the webhook service
 bot run --project 7 12345         # build the report for pipeline 12345 of project 7
                                    # and print it to stdout (add --log-level error
                                    # to keep the output to just the report)
+bot advise --project 7 12345      # print resource-usage recommendations for the
+                                   # pipeline (add --job <name> for a single job)
 ```
 
 `bot run` goes through the exact same report pipeline as the webhook path — only the destination differs (stdout instead of an MR comment). Handy for testing the report against a real pipeline without firing a webhook; it does not need `WEBHOOK_SECRET`.
@@ -80,10 +82,12 @@ Environment variables only (12-factor). The bot fails fast at startup if a requi
 | `GITLAB_URL` | | `https://gitlab.com` | GitLab instance base URL |
 | `THROTTLE_WARN_RATIO` | | `0.25` | Throttled-periods ratio above which a job gets a ⚠️ warning |
 | `SCRAPE_INTERVAL` | | `30s` | Prometheus scrape interval; query windows are padded by one interval |
+| `LONG_JOB_DURATION` | | `10m` | Job duration above which `advise` suggests splitting the job |
+| `MEMORY_PRESSURE_RATIO` | | `0.9` | Peak-memory-to-limit ratio above which `advise` warns about OOMKill risk |
 | `LISTEN_ADDR` | | `:8080` | Webhook listen address |
 | `OPS_ADDR` | | `:8081` | Health (`/healthz`, `/readyz`) and metrics (`/metrics`) address |
 | `LOG_LEVEL` | | `info` | `debug`, `info`, `warn`, `error` — JSON logs to stdout via [zap](https://github.com/uber-go/zap); also settable per-invocation with the `--log-level` flag |
-| `COMMANDS_ENABLED` | | `false` | Turn on [interactive report commands](docs/usage.md#4-interactive-report-commands) (reply with `help` / `details [job\|pod] <name>` on the bot's own MR report comment) |
+| `COMMANDS_ENABLED` | | `false` | Turn on [interactive report commands](docs/usage.md#4-interactive-report-commands) (reply with `help` / `details [job\|pod] <name>` / `advise [<job>]` on the bot's own MR report comment) |
 | `COMMANDS_SIGNING_KEY` | ✅ (`serve` only, if `COMMANDS_ENABLED=true`) | — | HMAC key signing the report marker; must be identical across all replicas |
 | `CHART_FORMAT` | | `png` | Image format for `details` charts: `png` (inline-renders reliably in GitLab), `svg`, or `markdown` (a pure-text ASCII line chart embedded in the reply — no upload) |
 

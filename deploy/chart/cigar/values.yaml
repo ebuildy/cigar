@@ -22,6 +22,11 @@ config:
   throttleWarnRatio: "0.25"
   # Prometheus scrape interval; query windows are padded by one interval.
   scrapeInterval: "30s"
+  # Job duration above which the advise command suggests splitting the job.
+  longJobDuration: "10m"
+  # Peak-memory-to-limit ratio above which the advise command warns about
+  # OOMKill risk.
+  memoryPressureRatio: "0.9"
   # Chart format for `details` command replies: "png" (default, renders inline
   # reliably in GitLab), "svg" (vector, but GitLab's inline SVG rendering is
   # unreliable), or "markdown" (an ASCII line chart embedded in the reply).
