@@ -111,7 +111,10 @@ log:
   level: info
 ```
 
-A committed sample lives at `docs/config.sample.yaml`.
+A commented `config.yaml` lives at the repo root. It holds only non-secret
+defaults, is git-tracked, and doubles as (a) the reference/sample and (b) the
+default config picked up during local `bot run`/`bot serve` (since `./config.yaml`
+is first in the search path).
 
 ## Architecture
 
@@ -193,6 +196,12 @@ errors for unrelated commands.
   - `auth_methods` accepts both a yaml list and a comma env string.
 - `internal/e2e` is env-driven; update it to the renamed env vars and confirm it
   still passes unchanged in behavior.
+- **Test isolation from the root `config.yaml`:** tests must not accidentally pick
+  up the repo-root `./config.yaml`. `internal/config` and `e2e` tests run from
+  their own package dir (not repo root), so `./config.yaml` is absent there; tests
+  that need a specific file pass an explicit path. Confirm no test's effective cwd
+  is the repo root, and that `config.Load` with no file + full env still behaves
+  as today.
 - `helm lint` + `helm template` to verify the ConfigMap, mount, and checksum
   annotation render; confirm no non-secret env entries remain.
 
@@ -201,7 +210,7 @@ errors for unrelated commands.
 - `README.md`: replace the env-var table with the mapping table above and a
   `config.yaml` example; note the breaking renames.
 - `docs/usage.md`: add a "Configuration" section (file, precedence, discovery).
-- Add `docs/config.sample.yaml`.
+- Root `config.yaml` is committed as the reference/default (created).
 - CLAUDE.md: update the Config section (env → file + precedence) and add viper to
   approved deps.
 
@@ -212,4 +221,3 @@ errors for unrelated commands.
   mounts the ConfigMap.
 - README env table and docs updated; sample file committed.
 - Config precedence covered by tests.
-```

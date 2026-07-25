@@ -1,0 +1,55 @@
+# cigar (gitlab-ci-resources-bot) configuration.
+#
+# This is the primary config source. Every key below is overridable by an
+# environment variable and a CLI flag, following one rule:
+#
+#   group.key (here)  ->  GROUP_KEY (env)  ->  --group-key (flag)
+#
+# Precedence, highest first:  --flag  >  ENV_VAR  >  this file  >  built-in default
+#
+# Secrets are NEVER read from this file. Provide them via environment only
+# (backed by a Kubernetes Secret in production):
+#   WEBHOOK_SECRET, WEBHOOK_SIGNING_TOKEN, GITLAB_TOKEN, COMMANDS_SIGNING_KEY
+
+gitlab:
+  # GitLab instance base URL.
+  url: https://gitlab.com
+
+prometheus:
+  # Prometheus base URL — must scrape cadvisor and kube-state-metrics.
+  url: http://prometheus-operated.monitoring.svc:9090
+  # Scrape interval; query windows are padded by one interval.
+  scrape_interval: 30s
+
+# Pod-correlation strategy: "trace" (parse the job's GitLab trace) or
+# "prometheus" (join kube_pod_labels{label_job_id}).
+pod_resolver: trace
+
+webhook:
+  # Ordered webhook auth methods: secret, signature. Empty defaults to [secret].
+  auth_methods: [secret]
+
+report:
+  # Throttled-periods ratio above which a job gets a throttling warning.
+  throttle_warn_ratio: 0.25
+  # Job duration above which the advise command suggests splitting the job.
+  long_job_duration: 10m
+  # Peak-memory-to-limit ratio above which OOMKill risk is warned.
+  memory_pressure_ratio: 0.9
+
+commands:
+  # Interactive report commands (reply "help" / "details ..." to the report).
+  # Requires COMMANDS_SIGNING_KEY when enabled.
+  enabled: false
+  # Chart format for `details` replies: png, svg, or markdown.
+  chart_format: png
+
+server:
+  # Webhook listen address.
+  listen_addr: ":8080"
+  # Health/metrics (ops) listen address.
+  ops_addr: ":8081"
+
+log:
+  # Log verbosity: debug, info, warn, error.
+  level: info
