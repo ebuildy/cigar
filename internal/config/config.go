@@ -1,5 +1,7 @@
-// Package config loads and validates the bot configuration from the
-// environment (12-factor). Load fails fast on missing required variables.
+// Package config loads and validates the bot configuration from a YAML file,
+// environment variables and CLI flags (precedence: flag > env > file > default).
+// Secrets are read from the environment only. Load fails fast on missing
+// required values.
 package config
 
 import (
@@ -8,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/spf13/viper"
 )
 
 // setting is one non-secret configuration knob. env and flag names are derived
@@ -65,97 +69,115 @@ type Config struct {
 	ChartFormat         string
 }
 
-func Load() (*Config, error) {
+// New returns an env-only viper: defaults set and each key bound to its env var.
+// This is the base used by Load; Resolve layers a config file and CLI flags on top.
+func New() *viper.Viper {
+	v := viper.New()
+	for _, s := range settings {
+		v.SetDefault(s.key, s.def)
+		_ = v.BindEnv(s.key, envName(s.key))
+	}
+	return v
+}
+
+// Load extracts and validates a Config from v. Non-secret values come from v
+// (flag > env > file > default); the four secrets are read from the environment
+// only and never appear in v or the config file.
+func Load(v *viper.Viper) (*Config, error) {
 	cfg := &Config{
 		WebhookSecret:       os.Getenv("WEBHOOK_SECRET"),
 		WebhookSigningToken: os.Getenv("WEBHOOK_SIGNING_TOKEN"),
-		GitLabURL:           getenv("GITLAB_URL", "https://gitlab.com"),
 		GitLabToken:         os.Getenv("GITLAB_TOKEN"),
-		PrometheusURL:       os.Getenv("PROMETHEUS_URL"),
-		ThrottleWarnRatio:   0.25,
-		LongJobDuration:     10 * time.Minute,
-		MemoryPressureRatio: 0.9,
-		ScrapeInterval:      30 * time.Second,
-		ListenAddr:          getenv("LISTEN_ADDR", ":8080"),
-		OpsAddr:             getenv("OPS_ADDR", ":8081"),
-		PodResolver:         getenv("POD_RESOLVER", "trace"),
 		CommandsSigningKey:  os.Getenv("COMMANDS_SIGNING_KEY"),
-		ChartFormat:         strings.ToLower(getenv("CHART_FORMAT", "png")),
-	}
-	// LOG_LEVEL is consumed by the --log-level root flag (cmd/bot), not here.
 
-	if v := os.Getenv("THROTTLE_WARN_RATIO"); v != "" {
-		r, err := strconv.ParseFloat(v, 64)
-		if err != nil || r < 0 || r > 1 {
-			return nil, fmt.Errorf("THROTTLE_WARN_RATIO must be a float in [0,1], got %q", v)
-		}
-		cfg.ThrottleWarnRatio = r
+		GitLabURL:     v.GetString("gitlab.url"),
+		PrometheusURL: v.GetString("prometheus.url"),
+		PodResolver:   v.GetString("pod_resolver"),
+		ListenAddr:    v.GetString("server.listen_addr"),
+		OpsAddr:       v.GetString("server.ops_addr"),
+		ChartFormat:   strings.ToLower(v.GetString("commands.chart_format")),
 	}
 
-	if v := os.Getenv("SCRAPE_INTERVAL"); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil || d <= 0 {
-			return nil, fmt.Errorf("SCRAPE_INTERVAL must be a positive duration, got %q", v)
-		}
-		cfg.ScrapeInterval = d
+	var err error
+	if cfg.AuthMethods, err = authMethods(v); err != nil {
+		return nil, err
 	}
-
-	if v := os.Getenv("LONG_JOB_DURATION"); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil || d <= 0 {
-			return nil, fmt.Errorf("LONG_JOB_DURATION must be a positive duration, got %q", v)
-		}
-		cfg.LongJobDuration = d
+	if cfg.ThrottleWarnRatio, err = parseRatio(v.GetString("report.throttle_warn_ratio"), "REPORT_THROTTLE_WARN_RATIO", true); err != nil {
+		return nil, err
 	}
-
-	if v := os.Getenv("MEMORY_PRESSURE_RATIO"); v != "" {
-		r, err := strconv.ParseFloat(v, 64)
-		if err != nil || r <= 0 || r > 1 {
-			return nil, fmt.Errorf("MEMORY_PRESSURE_RATIO must be a float in (0,1], got %q", v)
-		}
-		cfg.MemoryPressureRatio = r
+	if cfg.MemoryPressureRatio, err = parseRatio(v.GetString("report.memory_pressure_ratio"), "REPORT_MEMORY_PRESSURE_RATIO", false); err != nil {
+		return nil, err
 	}
-
-	if v := os.Getenv("COMMANDS_ENABLED"); v != "" {
-		b, err := strconv.ParseBool(v)
-		if err != nil {
-			return nil, fmt.Errorf("COMMANDS_ENABLED must be a boolean, got %q", v)
-		}
-		cfg.CommandsEnabled = b
+	if cfg.ScrapeInterval, err = parseDuration(v.GetString("prometheus.scrape_interval"), "PROMETHEUS_SCRAPE_INTERVAL"); err != nil {
+		return nil, err
+	}
+	if cfg.LongJobDuration, err = parseDuration(v.GetString("report.long_job_duration"), "REPORT_LONG_JOB_DURATION"); err != nil {
+		return nil, err
+	}
+	if cfg.CommandsEnabled, err = parseBool(v.GetString("commands.enabled"), "COMMANDS_ENABLED"); err != nil {
+		return nil, err
 	}
 
 	if !validPodResolvers[cfg.PodResolver] {
 		return nil, fmt.Errorf("POD_RESOLVER must be one of prometheus, trace, got %q", cfg.PodResolver)
 	}
-
 	if !validChartFormats[cfg.ChartFormat] {
-		return nil, fmt.Errorf("CHART_FORMAT must be one of png, svg, markdown, got %q", cfg.ChartFormat)
+		return nil, fmt.Errorf("COMMANDS_CHART_FORMAT must be one of png, svg, markdown, got %q", cfg.ChartFormat)
 	}
-
-	// WEBHOOK_SECRET is only required by `serve`, which validates it itself.
 	for name, val := range map[string]string{
 		"GITLAB_TOKEN":   cfg.GitLabToken,
 		"PROMETHEUS_URL": cfg.PrometheusURL,
 	} {
 		if val == "" {
-			return nil, fmt.Errorf("missing required environment variable %s", name)
+			return nil, fmt.Errorf("missing required configuration %s", name)
 		}
 	}
-
-	methods, err := parseAuthMethods(os.Getenv("AUTH_METHODS"))
-	if err != nil {
-		return nil, err
-	}
-	cfg.AuthMethods = methods
-
 	return cfg, nil
 }
 
-func getenv(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+// authMethods reads webhook.auth_methods, accepting either a yaml list (from the
+// file) or a comma-separated string (from env/default).
+func authMethods(v *viper.Viper) ([]string, error) {
+	if s, ok := v.Get("webhook.auth_methods").(string); ok {
+		return parseAuthMethods(s)
 	}
-	return def
+	return parseAuthMethods(strings.Join(v.GetStringSlice("webhook.auth_methods"), ","))
+}
+
+// parseRatio parses a float in [0,1] when allowZero, else (0,1].
+func parseRatio(raw, label string, allowZero bool) (float64, error) {
+	r, err := strconv.ParseFloat(raw, 64)
+	invalid := err != nil || r < 0 || r > 1
+	if !allowZero {
+		invalid = invalid || r <= 0
+	}
+	if invalid {
+		rng := "[0,1]"
+		if !allowZero {
+			rng = "(0,1]"
+		}
+		return 0, fmt.Errorf("%s must be a float in %s, got %q", label, rng, raw)
+	}
+	return r, nil
+}
+
+func parseDuration(raw, label string) (time.Duration, error) {
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("%s must be a positive duration, got %q", label, raw)
+	}
+	return d, nil
+}
+
+func parseBool(raw, label string) (bool, error) {
+	if raw == "" {
+		return false, nil
+	}
+	b, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("%s must be a boolean, got %q", label, raw)
+	}
+	return b, nil
 }
 
 var validAuthMethods = map[string]bool{"secret": true, "signature": true}
