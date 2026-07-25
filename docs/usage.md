@@ -27,6 +27,8 @@ startup on missing/invalid required values.
 | `WEBHOOK_SIGNING_TOKEN` | when `signature` enabled | — | GitLab signing token (`whsec_…`) used to verify the `webhook-signature` HMAC |
 | `THROTTLE_WARN_RATIO` | no | `0.25` | Throttled-periods ratio above which a warning is shown |
 | `SCRAPE_INTERVAL` | no | `30s` | Prometheus scrape interval; query windows are padded by one interval |
+| `LONG_JOB_DURATION` | no | `10m` | Job duration above which `advise` suggests splitting the job |
+| `MEMORY_PRESSURE_RATIO` | no | `0.9` | Peak-memory-to-limit ratio above which `advise` warns about OOMKill risk |
 | `LISTEN_ADDR` | no | `:8080` | Webhook HTTP listener |
 | `OPS_ADDR` | no | `:8081` | Ops listener: `/healthz`, `/readyz`, `/metrics` |
 | `LOG_LEVEL` | no | `info` | `debug` \| `info` \| `warn` \| `error` — structured JSON logs (zap) written to stdout; also settable per-invocation with the `--log-level` root flag, which takes precedence |
@@ -258,11 +260,36 @@ comment (not as a new top-level comment):
 | `details job <name>` | Reply with CPU, memory, and network charts for the named job in this report |
 | `details pod <runner-...>` | Same, for one of this report's runner pods |
 | `details <name>` | Auto-detects job vs. pod — names starting with `runner-` are treated as pods, everything else as a job |
+| `advise` | Reply with recommendations for every job in this report |
+| `advise <job>` | Same, for one job — accepts a job name or numeric ID |
 
 Each `details` reply embeds three charts (uploaded to the MR) covering the
 target's run window. Rendered as PNG by default; set `CHART_FORMAT` to `svg`
 for vector images, or `markdown` for a pure-text ASCII line chart embedded
 right in the reply (no upload).
+
+#### How advice is generated
+
+Each job is checked by an independent rule; a rule that does not apply stays
+silent, and a pipeline with nothing to fix gets `You are all good dude!`.
+
+| Rule | Fires when |
+|---|---|
+| `cpu-throttle` | The job was throttled at or above `THROTTLE_WARN_RATIO` |
+| `java-threads` | Throttled **and** the job trace shows a Maven/Gradle/Java build |
+| `long-job` | The job ran longer than `LONG_JOB_DURATION` |
+| `memory-pressure` | Peak memory reached `MEMORY_PRESSURE_RATIO` of the memory limit |
+
+The `java-threads` rule is the only one that reads the job's trace, and it is
+fetched only for jobs that were actually throttled — one extra API call per
+throttled job, none for the rest.
+
+The same rules back the CLI:
+
+```sh
+bot advise --project 42 987654            # every job
+bot advise --project 42 987654 --job test # one job
+```
 
 ### How it works / security
 

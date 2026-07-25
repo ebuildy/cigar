@@ -82,7 +82,7 @@ func printJobDetails(cmd *cobra.Command, rep *reporter.Reporter, cfg *config.Con
 	if err != nil {
 		return err
 	}
-	j, ok := findJob(jobs, sel)
+	j, ok := gitlab.FindJob(jobs, sel)
 	if !ok {
 		return fmt.Errorf("no job matching %q in pipeline %d", sel, pipelineID)
 	}
@@ -158,24 +158,6 @@ func printJobDetails(cmd *cobra.Command, rep *reporter.Reporter, cfg *config.Con
 		}
 	}
 	return nil
-}
-
-// findJob matches a job by numeric ID first (when sel parses as an int), then by
-// exact name.
-func findJob(jobs []gitlab.Job, sel string) (gitlab.Job, bool) {
-	if id, err := strconv.ParseInt(sel, 10, 64); err == nil {
-		for _, j := range jobs {
-			if j.ID == id {
-				return j, true
-			}
-		}
-	}
-	for _, j := range jobs {
-		if j.Name == sel {
-			return j, true
-		}
-	}
-	return gitlab.Job{}, false
 }
 
 func lineToSeries(l metrics.Line) chart.Series {

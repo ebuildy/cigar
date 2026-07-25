@@ -3,8 +3,11 @@ package gitlab
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 
 	"go.uber.org/zap"
@@ -117,5 +120,101 @@ func TestNewClientMethods(t *testing.T) {
 	}
 	if err := c.CreateDiscussionReply(ctx, 7, 3, "abc", "hi"); err != nil {
 		t.Fatalf("CreateDiscussionReply: %v", err)
+	}
+}
+
+// TestUpsertNote pins the report-note policy: reuse the bot's existing report
+// note only when its discussion has no sub-notes; once it has replies (e.g.
+// from an advise/details command), post a fresh note instead of editing one
+// people are already discussing.
+func TestUpsertNote(t *testing.T) {
+	const marker = "<!-- ci-resources-bot"
+	reportRoot := func(id int, extra string) string {
+		return fmt.Sprintf(`{"id":%d,"body":%q,"author":{"id":555},"system":false}`,
+			id, marker+" p=1 m=1 sig=x -->\n"+extra)
+	}
+	plainNote := func(id int, body string) string {
+		return fmt.Sprintf(`{"id":%d,"body":%q,"author":{"id":9},"system":false}`, id, body)
+	}
+	systemNote := func(id int, body string) string {
+		return fmt.Sprintf(`{"id":%d,"body":%q,"author":{"id":1},"system":true}`, id, body)
+	}
+	disc := func(id string, notes ...string) string {
+		return fmt.Sprintf(`{"id":%q,"individual_note":%t,"notes":[%s]}`,
+			id, len(notes) == 1, strings.Join(notes, ","))
+	}
+
+	tests := []struct {
+		name        string
+		discussions string
+		wantCreate  bool
+		wantUpdate  int64 // note ID expected to be updated, 0 for none
+	}{
+		{name: "no report note creates", discussions: `[]`, wantCreate: true},
+		{
+			name:        "report note without replies is updated in place",
+			discussions: "[" + disc("d1", reportRoot(10, "old")) + "]",
+			wantUpdate:  10,
+		},
+		{
+			name:        "report note with a reply gets a fresh note",
+			discussions: "[" + disc("d1", reportRoot(10, "old"), plainNote(11, "an advise reply")) + "]",
+			wantCreate:  true,
+		},
+		{
+			name: "skips the replied report and updates the reply-less one",
+			discussions: "[" +
+				disc("d1", reportRoot(10, "old"), plainNote(11, "reply")) + "," +
+				disc("d2", reportRoot(20, "newer")) + "]",
+			wantUpdate: 20,
+		},
+		{
+			name: "ignores human and system notes",
+			discussions: "[" +
+				disc("d0", plainNote(1, "just a human comment")) + "," +
+				disc("d9", systemNote(9, "changed the description")) + "]",
+			wantCreate: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var created bool
+			var updatedID int64
+			mux := http.NewServeMux()
+			mux.HandleFunc("GET /api/v4/projects/7/merge_requests/3/discussions",
+				func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, tt.discussions) })
+			mux.HandleFunc("POST /api/v4/projects/7/merge_requests/3/notes",
+				func(w http.ResponseWriter, _ *http.Request) {
+					created = true
+					w.WriteHeader(http.StatusCreated)
+					_, _ = io.WriteString(w, `{"id":99}`)
+				})
+			mux.HandleFunc("PUT /api/v4/projects/7/merge_requests/3/notes/{id}",
+				func(w http.ResponseWriter, r *http.Request) {
+					updatedID, _ = strconv.ParseInt(r.PathValue("id"), 10, 64)
+					_, _ = fmt.Fprintf(w, `{"id":%s}`, r.PathValue("id"))
+				})
+			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+				t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+				w.WriteHeader(http.StatusNotFound)
+			})
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+
+			c, err := New(srv.URL, "tok", zap.NewNop())
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if err := c.UpsertNote(context.Background(), 7, 3, marker, "new body"); err != nil {
+				t.Fatalf("UpsertNote: %v", err)
+			}
+			if created != tt.wantCreate {
+				t.Errorf("created = %v, want %v", created, tt.wantCreate)
+			}
+			if updatedID != tt.wantUpdate {
+				t.Errorf("updated note = %d, want %d", updatedID, tt.wantUpdate)
+			}
+		})
 	}
 }

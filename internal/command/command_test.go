@@ -1,6 +1,9 @@
 package command
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParse(t *testing.T) {
 	tests := []struct {
@@ -22,6 +25,11 @@ func TestParse(t *testing.T) {
 		{name: "chatter ignored", body: "thanks bot!", wantOK: false},
 		{name: "details without target ignored", body: "details", wantOK: false},
 		{name: "extra args ignored", body: "details job build extra", wantOK: false},
+		{name: "advise all", body: "advise", wantOK: true, wantKind: KindAdvise},
+		{name: "advise case-insensitive", body: "ADVISE", wantOK: true, wantKind: KindAdvise},
+		{name: "advise one job", body: "advise build", wantOK: true, wantKind: KindAdvise, wantName: "build"},
+		{name: "advise explicit job", body: "advise job build", wantOK: true, wantKind: KindAdvise, wantName: "build"},
+		{name: "advise extra args ignored", body: "advise job build extra", wantOK: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -37,5 +45,14 @@ func TestParse(t *testing.T) {
 					tt.body, cmd, tt.wantKind, tt.wantTarget, tt.wantName)
 			}
 		})
+	}
+}
+
+// TestHelpTextListsAdvise keeps the help reply honest about what exists.
+func TestHelpTextListsAdvise(t *testing.T) {
+	for _, want := range []string{"`advise`", "`advise <job>`"} {
+		if !strings.Contains(HelpText, want) {
+			t.Errorf("HelpText missing %q:\n%s", want, HelpText)
+		}
 	}
 }

@@ -21,6 +21,10 @@ A Go service that receives GitLab **Pipeline events** webhooks, queries **Promet
 ## Architecture
 
 ```txt
+.dev/                    # all dev stuff to work locally
+  scripts                # dev scripts (bash) , tooling to develop
+  charts                 # helm charts to develop (gitlab omnibus ....)
+  helmfile.yaml.gotmpl.  # the helmfile to orchestrate dev applications (prometheus, gitlab, cigar ....)
 cmd/
   bot/                   # cobra CLI: main.go (root cmd), serve.go (`bot serve`), run.go (`bot run`), deps.go (shared wiring)
 internal/

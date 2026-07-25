@@ -2,12 +2,14 @@ package command
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"go.uber.org/zap"
 
+	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/advice"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/chart"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/correlate"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/gitlab"
@@ -15,11 +17,20 @@ import (
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/report"
 )
 
+// Advisor produces recommendations for a pipeline, optionally narrowed to one
+// job. It is an interface so the handler stays independent of the reporter and
+// stubbable in tests. An unmatched jobFilter must return an error wrapping
+// gitlab.ErrJobNotFound.
+type Advisor interface {
+	Advise(ctx context.Context, projectID, pipelineID int64, jobFilter string) ([]advice.Advice, error)
+}
+
 // Handler authorizes and executes command notes.
 type Handler struct {
 	GitLab      gitlab.Client
 	Resolver    correlate.Resolver
 	Series      metrics.SeriesSource
+	Advisor     Advisor // nil disables the advise command
 	SigningKey  []byte
 	BotUserID   int64
 	ChartFormat chart.Format // PNG (default) or SVG
@@ -61,8 +72,26 @@ func (h *Handler) Handle(ctx context.Context, ev NoteEvent) error {
 		return h.reply(ctx, ev, HelpText)
 	case KindDetails:
 		return h.details(ctx, ev, pipelineID, cmd)
+	case KindAdvise:
+		return h.advise(ctx, ev, pipelineID, cmd)
 	}
 	return nil
+}
+
+// advise runs the advice engine over the report's pipeline (or one job of it)
+// and posts the rendered recommendations as one reply.
+func (h *Handler) advise(ctx context.Context, ev NoteEvent, pipelineID int64, cmd Command) error {
+	if h.Advisor == nil {
+		return h.reply(ctx, ev, "Advice is not available on this instance.")
+	}
+	all, err := h.Advisor.Advise(ctx, ev.ProjectID, pipelineID, cmd.Name)
+	if errors.Is(err, gitlab.ErrJobNotFound) {
+		return h.reply(ctx, ev, fmt.Sprintf("`%s` is not part of pipeline #%d's report.", cmd.Name, pipelineID))
+	}
+	if err != nil {
+		return fmt.Errorf("build advice for pipeline %d: %w", pipelineID, err)
+	}
+	return h.reply(ctx, ev, advice.Render(pipelineID, all))
 }
 
 func (h *Handler) reply(ctx context.Context, ev NoteEvent, body string) error {

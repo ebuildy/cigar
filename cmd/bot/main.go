@@ -81,7 +81,7 @@ func main() {
 	}
 	root.PersistentFlags().StringVar(&logLevel, "log-level", envOr("LOG_LEVEL", "info"),
 		"log verbosity: debug, info, warn or error (defaults to $LOG_LEVEL, then info)")
-	root.AddCommand(newServeCmd(), newRunCmd())
+	root.AddCommand(newServeCmd(), newRunCmd(), newAdviseCmd())
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

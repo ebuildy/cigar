@@ -2,12 +2,14 @@ package command
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"go.uber.org/zap"
 
+	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/advice"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/chart"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/gitlab"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/metrics"
@@ -249,5 +251,88 @@ func TestHandleDetailsUnknownJob(t *testing.T) {
 	}
 	if gl.uploads != 0 || len(gl.replies) != 1 {
 		t.Fatalf("unknown job: uploads=%d replies=%d, want 0 and 1", gl.uploads, len(gl.replies))
+	}
+}
+
+// fakeAdvisor records what the handler asked for and returns canned advice.
+type fakeAdvisor struct {
+	calls     int
+	gotFilter string
+	out       []advice.Advice
+	err       error
+}
+
+func (f *fakeAdvisor) Advise(_ context.Context, _, _ int64, jobFilter string) ([]advice.Advice, error) {
+	f.calls++
+	f.gotFilter = jobFilter
+	return f.out, f.err
+}
+
+func TestHandleAdviseAllJobs(t *testing.T) {
+	gl := &fakeGitLab{discussion: signedRoot(42, 3)}
+	adv := &fakeAdvisor{out: []advice.Advice{
+		{Job: "build", Rule: "cpu-throttle", Title: "⚠️ CPU throttling", Body: "raise the limit"},
+	}}
+	h := newHandler(gl, &fakeResolver{}, &fakeSeries{})
+	h.Advisor = adv
+
+	if err := h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "advise"}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if adv.calls != 1 || adv.gotFilter != "" {
+		t.Fatalf("Advise called %d times with filter %q, want 1 and \"\"", adv.calls, adv.gotFilter)
+	}
+	if len(gl.replies) != 1 {
+		t.Fatalf("replies = %d, want 1", len(gl.replies))
+	}
+	if !strings.Contains(gl.replies[0], "raise the limit") {
+		t.Fatalf("reply does not carry the advice:\n%s", gl.replies[0])
+	}
+	if !strings.Contains(gl.replies[0], report.MarkerPrefix) {
+		t.Fatalf("reply not tagged with the marker: %q", gl.replies[0])
+	}
+}
+
+func TestHandleAdviseOneJob(t *testing.T) {
+	gl := &fakeGitLab{discussion: signedRoot(42, 3)}
+	adv := &fakeAdvisor{}
+	h := newHandler(gl, &fakeResolver{}, &fakeSeries{})
+	h.Advisor = adv
+
+	if err := h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "advise build"}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if adv.gotFilter != "build" {
+		t.Fatalf("filter = %q, want %q", adv.gotFilter, "build")
+	}
+	// No advice at all must produce the clean message, not an empty reply.
+	if len(gl.replies) != 1 || !strings.Contains(gl.replies[0], advice.CleanMessage) {
+		t.Fatalf("replies = %v, want one containing %q", gl.replies, advice.CleanMessage)
+	}
+}
+
+func TestHandleAdviseUnknownJob(t *testing.T) {
+	gl := &fakeGitLab{discussion: signedRoot(42, 3)}
+	adv := &fakeAdvisor{err: fmt.Errorf("%q: %w", "nope", gitlab.ErrJobNotFound)}
+	h := newHandler(gl, &fakeResolver{}, &fakeSeries{})
+	h.Advisor = adv
+
+	if err := h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "advise nope"}); err != nil {
+		t.Fatalf("Handle must not fail on an unknown job: %v", err)
+	}
+	if len(gl.replies) != 1 || !strings.Contains(gl.replies[0], "not part of pipeline") {
+		t.Fatalf("replies = %v, want one refusal notice", gl.replies)
+	}
+}
+
+func TestHandleAdviseWithoutAdvisor(t *testing.T) {
+	gl := &fakeGitLab{discussion: signedRoot(42, 3)}
+	h := newHandler(gl, &fakeResolver{}, &fakeSeries{}) // Advisor left nil
+
+	if err := h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "advise"}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(gl.replies) != 1 || !strings.Contains(gl.replies[0], "not available") {
+		t.Fatalf("replies = %v, want one 'not available' notice", gl.replies)
 	}
 }

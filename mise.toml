@@ -31,6 +31,10 @@ run = "go test -race -v -count=1 ./internal/e2e/"
 description = "Run golangci-lint"
 run = "golangci-lint run"
 
+[tasks."sign-commits"]
+description = "Verify every commit on this branch (vs main) is signed; if any is not, rebase the branch in place to sign them all. Override the base with BASE_BRANCH."
+run = ".dev/scripts/sign-commits.sh"
+
 [tasks."release:snapshot"]
 description = "Build a local snapshot release with goreleaser (no publish)"
 run = "goreleaser release --snapshot --clean"

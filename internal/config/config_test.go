@@ -3,6 +3,7 @@ package config
 import (
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestParseAuthMethods(t *testing.T) {
@@ -169,6 +170,57 @@ func TestLoadCommandsConfig(t *testing.T) {
 		t.Setenv("COMMANDS_ENABLED", "maybe")
 		if _, err := Load(); err == nil {
 			t.Fatal("Load succeeded, want error on COMMANDS_ENABLED=maybe")
+		}
+	})
+}
+
+func TestLoadAdviceThresholds(t *testing.T) {
+	t.Setenv("GITLAB_TOKEN", "tok")
+	t.Setenv("PROMETHEUS_URL", "http://prom")
+
+	t.Run("defaults", func(t *testing.T) {
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.LongJobDuration != 10*time.Minute {
+			t.Errorf("LongJobDuration = %v, want 10m", cfg.LongJobDuration)
+		}
+		if cfg.MemoryPressureRatio != 0.9 {
+			t.Errorf("MemoryPressureRatio = %v, want 0.9", cfg.MemoryPressureRatio)
+		}
+	})
+
+	t.Run("overrides", func(t *testing.T) {
+		t.Setenv("LONG_JOB_DURATION", "25m")
+		t.Setenv("MEMORY_PRESSURE_RATIO", "0.75")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.LongJobDuration != 25*time.Minute {
+			t.Errorf("LongJobDuration = %v, want 25m", cfg.LongJobDuration)
+		}
+		if cfg.MemoryPressureRatio != 0.75 {
+			t.Errorf("MemoryPressureRatio = %v, want 0.75", cfg.MemoryPressureRatio)
+		}
+	})
+
+	t.Run("invalid values are rejected", func(t *testing.T) {
+		for _, tc := range []struct{ key, val string }{
+			{"LONG_JOB_DURATION", "soon"},
+			{"LONG_JOB_DURATION", "0s"},
+			{"LONG_JOB_DURATION", "-5m"},
+			{"MEMORY_PRESSURE_RATIO", "high"},
+			{"MEMORY_PRESSURE_RATIO", "0"},
+			{"MEMORY_PRESSURE_RATIO", "1.5"},
+		} {
+			t.Run(tc.key+"="+tc.val, func(t *testing.T) {
+				t.Setenv(tc.key, tc.val)
+				if _, err := Load(); err == nil {
+					t.Fatalf("Load accepted %s=%q", tc.key, tc.val)
+				}
+			})
 		}
 	})
 }

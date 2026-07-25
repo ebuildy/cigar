@@ -18,6 +18,8 @@ type Config struct {
 	GitLabToken         string
 	PrometheusURL       string
 	ThrottleWarnRatio   float64
+	LongJobDuration     time.Duration
+	MemoryPressureRatio float64
 	ScrapeInterval      time.Duration
 	ListenAddr          string
 	OpsAddr             string
@@ -35,6 +37,8 @@ func Load() (*Config, error) {
 		GitLabToken:         os.Getenv("GITLAB_TOKEN"),
 		PrometheusURL:       os.Getenv("PROMETHEUS_URL"),
 		ThrottleWarnRatio:   0.25,
+		LongJobDuration:     10 * time.Minute,
+		MemoryPressureRatio: 0.9,
 		ScrapeInterval:      30 * time.Second,
 		ListenAddr:          getenv("LISTEN_ADDR", ":8080"),
 		OpsAddr:             getenv("OPS_ADDR", ":8081"),
@@ -58,6 +62,22 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("SCRAPE_INTERVAL must be a positive duration, got %q", v)
 		}
 		cfg.ScrapeInterval = d
+	}
+
+	if v := os.Getenv("LONG_JOB_DURATION"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			return nil, fmt.Errorf("LONG_JOB_DURATION must be a positive duration, got %q", v)
+		}
+		cfg.LongJobDuration = d
+	}
+
+	if v := os.Getenv("MEMORY_PRESSURE_RATIO"); v != "" {
+		r, err := strconv.ParseFloat(v, 64)
+		if err != nil || r <= 0 || r > 1 {
+			return nil, fmt.Errorf("MEMORY_PRESSURE_RATIO must be a float in (0,1], got %q", v)
+		}
+		cfg.MemoryPressureRatio = r
 	}
 
 	if v := os.Getenv("COMMANDS_ENABLED"); v != "" {
