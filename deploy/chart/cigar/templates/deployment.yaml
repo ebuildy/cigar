@@ -11,10 +11,11 @@ spec:
       {{- include "cigar.selectorLabels" . | nindent 6 }}
   template:
     metadata:
-      {{- with .Values.podAnnotations }}
       annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
       labels:
         {{- include "cigar.labels" . | nindent 8 }}
         {{- with .Values.podLabels }}
@@ -50,18 +51,15 @@ spec:
               containerPort: {{ .Values.service.opsPort }}
               protocol: TCP
           env:
-            {{- if or (not .Values.config.authMethods) (contains "secret" (.Values.config.authMethods | default "")) }}
+            {{- $methods := .Values.config.webhook.authMethods | default (list "secret") }}
+            {{- if or (not .Values.config.webhook.authMethods) (has "secret" $methods) }}
             - name: WEBHOOK_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.secrets.existingSecret | default (include "cigar.fullname" .) }}
                   key: WEBHOOK_SECRET
             {{- end }}
-            {{- if .Values.config.authMethods }}
-            - name: AUTH_METHODS
-              value: {{ .Values.config.authMethods | quote }}
-            {{- end }}
-            {{- if contains "signature" (.Values.config.authMethods | default "") }}
+            {{- if has "signature" $methods }}
             - name: WEBHOOK_SIGNING_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -73,33 +71,13 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secrets.existingSecret | default (include "cigar.fullname" .) }}
                   key: GITLAB_TOKEN
-            {{- if .Values.commands.enabled }}
-            - name: COMMANDS_ENABLED
-              value: {{ .Values.commands.enabled | quote }}
+            {{- if .Values.config.commands.enabled }}
             - name: COMMANDS_SIGNING_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.secrets.existingSecret | default (include "cigar.fullname" .) }}
                   key: COMMANDS_SIGNING_KEY
             {{- end }}
-            - name: GITLAB_URL
-              value: {{ .Values.config.gitlabUrl | quote }}
-            - name: PROMETHEUS_URL
-              value: {{ .Values.config.prometheusUrl | quote }}
-            - name: POD_RESOLVER
-              value: {{ .Values.config.podResolver | quote }}
-            - name: THROTTLE_WARN_RATIO
-              value: {{ .Values.config.throttleWarnRatio | quote }}
-            - name: SCRAPE_INTERVAL
-              value: {{ .Values.config.scrapeInterval | quote }}
-            - name: LONG_JOB_DURATION
-              value: {{ .Values.config.longJobDuration | quote }}
-            - name: MEMORY_PRESSURE_RATIO
-              value: {{ .Values.config.memoryPressureRatio | quote }}
-            - name: CHART_FORMAT
-              value: {{ .Values.config.chartFormat | quote }}
-            - name: LOG_LEVEL
-              value: {{ .Values.config.logLevel | quote }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -115,14 +93,20 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- with .Values.volumeMounts }}
           volumeMounts:
+            - name: config
+              mountPath: /etc/cigar
+              readOnly: true
+            {{- with .Values.volumeMounts }}
             {{- toYaml . | nindent 12 }}
-          {{- end }}
-      {{- with .Values.volumes }}
+            {{- end }}
       volumes:
+        - name: config
+          configMap:
+            name: {{ include "cigar.fullname" . }}
+        {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

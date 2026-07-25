@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cigar.fullname" . }}
+  labels:
+    {{- include "cigar.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    gitlab:
+      url: {{ .Values.config.gitlab.url | quote }}
+    prometheus:
+      url: {{ .Values.config.prometheus.url | quote }}
+      scrape_interval: {{ .Values.config.prometheus.scrapeInterval | quote }}
+    pod_resolver: {{ .Values.config.podResolver | quote }}
+    webhook:
+      auth_methods: {{ .Values.config.webhook.authMethods | default (list "secret") | toJson }}
+    report:
+      throttle_warn_ratio: {{ .Values.config.report.throttleWarnRatio | quote }}
+      long_job_duration: {{ .Values.config.report.longJobDuration | quote }}
+      memory_pressure_ratio: {{ .Values.config.report.memoryPressureRatio | quote }}
+    commands:
+      enabled: {{ .Values.config.commands.enabled | quote }}
+      chart_format: {{ .Values.config.commands.chartFormat | quote }}
+    server:
+      listen_addr: {{ .Values.config.server.listenAddr | quote }}
+      ops_addr: {{ .Values.config.server.opsAddr | quote }}
+    log:
+      level: {{ .Values.config.log.level | quote }}
