@@ -5,12 +5,14 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
@@ -78,6 +80,60 @@ func New() *viper.Viper {
 		_ = v.BindEnv(s.key, envName(s.key))
 	}
 	return v
+}
+
+// BindFlags registers a persistent flag for each non-secret setting on cmd
+// (intended for the root command so subcommands inherit them), plus --config.
+func BindFlags(cmd *cobra.Command) {
+	f := cmd.PersistentFlags()
+	f.String("config", "", "config file path (default search: ./config.yaml then /etc/cigar/config.yaml; also $CIGAR_CONFIG)")
+	for _, s := range settings {
+		f.String(flagName(s.key), s.def, s.usage)
+	}
+}
+
+// Resolve builds the viper used to load configuration: env bindings (via New),
+// then the persistent flags bound by BindFlags, then the config file. Precedence
+// is viper's: changed flag > env > file > default. A --config / $CIGAR_CONFIG
+// path that cannot be read is a hard error; the default search path is optional.
+func Resolve(cmd *cobra.Command) (*viper.Viper, error) {
+	v := New()
+	root := cmd.Root()
+	for _, s := range settings {
+		if fl := root.PersistentFlags().Lookup(flagName(s.key)); fl != nil {
+			_ = v.BindPFlag(s.key, fl)
+		}
+	}
+	if err := readConfigFile(v, root); err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+
+func readConfigFile(v *viper.Viper, root *cobra.Command) error {
+	path, _ := root.PersistentFlags().GetString("config")
+	if path == "" {
+		path = os.Getenv("CIGAR_CONFIG")
+	}
+	if path != "" {
+		v.SetConfigFile(path)
+		if err := v.ReadInConfig(); err != nil {
+			return fmt.Errorf("read config %s: %w", path, err)
+		}
+		return nil
+	}
+	v.SetConfigName("config")
+	v.SetConfigType("yaml")
+	v.AddConfigPath(".")
+	v.AddConfigPath("/etc/cigar")
+	if err := v.ReadInConfig(); err != nil {
+		var notFound viper.ConfigFileNotFoundError
+		if errors.As(err, &notFound) {
+			return nil // optional: env + defaults
+		}
+		return fmt.Errorf("read config: %w", err)
+	}
+	return nil
 }
 
 // Load extracts and validates a Config from v. Non-secret values come from v
