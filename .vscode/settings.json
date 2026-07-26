@@ -1,0 +1,63 @@
+{
+  // ---- Go ---------------------------------------------------------------
+  // The toolchain is managed by mise; the mise extension puts the right Go on
+  // PATH. Don't let the Go extension fight it by auto-updating tools.
+  "go.useLanguageServer": true,
+  "go.toolsManagement.autoUpdate": false,
+  // Match `mise r lint` (golangci-lint v2 — the same binary CI runs).
+  "go.lintTool": "golangci-lint",
+  "go.lintFlags": ["run"],
+  "go.lintOnSave": "package",
+  // Match `mise r test` (race detector on); tests incl. e2e can be slow.
+  "go.testFlags": ["-race"],
+  "go.testTimeout": "300s",
+  "gopls": {
+    // Project formats with plain gofmt, not gofumpt — keep them aligned.
+    "formatting.gofumpt": false,
+    "ui.completion.usePlaceholders": true
+  },
+  "[go]": {
+    "editor.defaultFormatter": "golang.go",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit"
+    }
+  },
+
+  // ---- Helm / YAML ------------------------------------------------------
+  // Chart templates and the helmfile are Go templates — treat them as the
+  // `helm` language so the YAML validator stops flagging `{{ }}` as errors
+  // (CLAUDE.md: "IDE YAML errors on Go template syntax are noise").
+  "files.associations": {
+    "**/templates/*.yaml": "helm",
+    "**/templates/*.tpl": "helm",
+    "**/templates/NOTES.txt": "helm",
+    "*.gotmpl": "helm"
+  },
+  "yaml.schemas": {
+    "https://json.schemastore.org/chart.json": "**/Chart.yaml"
+  },
+  "[yaml]": {
+    "editor.defaultFormatter": "redhat.vscode-yaml",
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true
+  },
+
+  // ---- Other file types -------------------------------------------------
+  "[json][jsonc]": {
+    "editor.tabSize": 2
+  },
+  "[markdown]": {
+    "editor.defaultFormatter": "davidanson.vscode-markdownlint",
+    "editor.tabSize": 2
+  },
+
+  // ---- Workspace noise --------------------------------------------------
+  // Build/test artifacts (see .gitignore) — hide from search.
+  "search.exclude": {
+    "**/bin": true,
+    "**/dist": true,
+    "**/coverage.out": true,
+    "**/*.test": true
+  }
+}

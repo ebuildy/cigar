@@ -1,0 +1,23 @@
+{
+  "recommendations": [
+    // Go language support: gopls, debugging, test/lint integration.
+    "golang.go",
+    // mise manages the toolchain (go, golangci-lint, helm, kind, ...) and the
+    // repo's tasks (mise r build/test/lint). This surfaces them in VS Code and
+    // points the Go extension at the mise-managed Go.
+    "hverlin.mise-vscode",
+    // Kubernetes + Helm: registers the `helm` language used for chart templates
+    // and lints manifests.
+    "ms-kubernetes-tools.vscode-kubernetes-tools",
+    // values.yaml-aware completion/hover inside deploy/chart/cigar templates.
+    "tim-koehler.helm-intellisense",
+    // YAML validation/schema support (config.yaml, values.yaml, workflows).
+    "redhat.vscode-yaml",
+    // mise.toml / .goreleaser-style TOML editing.
+    "tamasfe.even-better-toml",
+    // CI lives in .github/workflows.
+    "github.vscode-github-actions",
+    // Docs are linted (see the README table warnings); keep them consistent.
+    "davidanson.vscode-markdownlint"
+  ]
+}
