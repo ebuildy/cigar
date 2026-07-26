@@ -86,7 +86,7 @@ works with just env).
 | `prometheus.url` | `PROMETHEUS_URL` | — (required) | cadvisor + kube-state-metrics scraped |
 | `prometheus.scrape_interval` | `PROMETHEUS_SCRAPE_INTERVAL` | `30s` | query windows padded by one interval |
 | `pod_resolver` | `POD_RESOLVER` | `trace` | `trace` or `prometheus` |
-| `webhook.auth_methods` | `WEBHOOK_AUTH_METHODS` | `secret` | ordered: `secret`, `signature` |
+| `webhook.auth_method` | `WEBHOOK_AUTH_METHOD` | `secret` | `secret` or `signing_token` |
 | `report.throttle_warn_ratio` | `REPORT_THROTTLE_WARN_RATIO` | `0.25` | ⚠️ warning threshold |
 | `report.long_job_duration` | `REPORT_LONG_JOB_DURATION` | `10m` | advice: split long jobs |
 | `report.memory_pressure_ratio` | `REPORT_MEMORY_PRESSURE_RATIO` | `0.9` | advice: OOMKill risk |
@@ -97,13 +97,17 @@ works with just env).
 | `log.level` | `LOG_LEVEL` | `info` | `--log-level` also available |
 
 **Secrets — environment only, never in the file:** `WEBHOOK_SECRET` (`serve`,
-if `secret` enabled), `WEBHOOK_SIGNING_TOKEN` (`serve`, if `signature` enabled),
-`GITLAB_TOKEN` (always), `COMMANDS_SIGNING_KEY` (`serve`, if commands enabled).
-`bot run` needs neither webhook secret.
+with `auth_method: secret`), `WEBHOOK_SIGNING_TOKEN` (`serve`, with
+`auth_method: signing_token`), `GITLAB_TOKEN` (always), `COMMANDS_SIGNING_KEY`
+(`serve`, if commands enabled). `bot run` needs neither webhook secret.
 
 ### Migrating to signing-token auth
 
-To move off the legacy secret token: set `WEBHOOK_AUTH_METHODS=secret,signature` with both credentials configured, migrate your GitLab webhooks to the signing token, then switch to `WEBHOOK_AUTH_METHODS=signature`.
+Exactly one method is active at a time. To move off the legacy secret token
+without dropping deliveries: add a signing token to each GitLab webhook while
+leaving its secret token in place (GitLab then sends both credentials), flip the
+bot to `WEBHOOK_AUTH_METHOD=signing_token` with a matching
+`WEBHOOK_SIGNING_TOKEN`, then clear the secret tokens in GitLab.
 
 See [`docs/usage.md`](docs/usage.md) for the full deployment, GitLab-configuration, testing, and interactive-commands guide.
 
@@ -139,7 +143,7 @@ Releases are handled by [GoReleaser](https://goreleaser.com): push a `v*` tag an
 
 ## Security
 
-- Webhook auth via `WEBHOOK_AUTH_METHODS` (default `secret`): `X-Gitlab-Token` validated with `subtle.ConstantTimeCompare`, and/or the GitLab signing token's HMAC-SHA256 `webhook-signature` header (5-minute replay window). Methods are tried in order; none authenticating gets a bare `401`.
+- Webhook auth via `WEBHOOK_AUTH_METHOD` (default `secret`): either `X-Gitlab-Token` validated with `subtle.ConstantTimeCompare`, or the GitLab signing token's HMAC-SHA256 `webhook-signature` header (5-minute replay window). One method is active; a request it doesn't authenticate gets a bare `401`.
 - Only `X-Gitlab-Event: Pipeline Hook` is processed; other events get `200` so GitLab doesn't disable the hook.
 - Request bodies capped at 1 MiB via Fiber's `BodyLimit` (`413` beyond that); server read/write timeouts set.
 - TLS terminates at the ingress; the pod listens plain HTTP on `:8080`, ops on `:8081`.
@@ -180,14 +184,14 @@ Helm chart in `deploy/chart/cigar`: Deployment (2 replicas, PDB), Service, Ingre
 ```sh
 helm install cigar deploy/chart/cigar \
   --set config.prometheus.url=http://prometheus-operated.monitoring.svc:9090 \
-  --set secrets.existingSecret=cigar   # Secret with keys WEBHOOK_SECRET + WEBHOOK_SIGNING_TOKEN + GITLAB_TOKEN
+  --set secrets.existingSecret=cigar   # Secret with GITLAB_TOKEN + the key your auth method needs
 ```
 
 The chart renders `config.*` values into a ConfigMap mounted at
 `/etc/cigar/config.yaml`; secrets come from an existing Secret (recommended) or
 `secrets.webhookSecret`/`secrets.signingToken`/`secrets.gitlabToken`. Enable
-signing-token auth via `config.webhook.authMethods` (e.g. `{secret,signature}`
-during migration, then `{signature}`). The NetworkPolicy defaults allow egress to any host on 443 (gitlab.com has no stable CIDR) and to an in-cluster Prometheus in the `monitoring` namespace — tighten `networkPolicy.*` to your environment.
+signing-token auth via `config.webhook.authMethod=signing_token` (the chart then
+injects `WEBHOOK_SIGNING_TOKEN` instead of `WEBHOOK_SECRET`). The NetworkPolicy defaults allow egress to any host on 443 (gitlab.com has no stable CIDR) and to an in-cluster Prometheus in the `monitoring` namespace — tighten `networkPolicy.*` to your environment.
 
 ## Status
 

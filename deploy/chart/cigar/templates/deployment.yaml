@@ -51,15 +51,15 @@ spec:
               containerPort: {{ .Values.service.opsPort }}
               protocol: TCP
           env:
-            {{- $methods := .Values.config.webhook.authMethods | default (list "secret") }}
-            {{- if or (not .Values.config.webhook.authMethods) (has "secret" $methods) }}
+            {{- $authMethod := .Values.config.webhook.authMethod | default "secret" }}
+            {{- if eq $authMethod "secret" }}
             - name: WEBHOOK_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.secrets.existingSecret | default (include "cigar.fullname" .) }}
                   key: WEBHOOK_SECRET
             {{- end }}
-            {{- if has "signature" $methods }}
+            {{- if eq $authMethod "signing_token" }}
             - name: WEBHOOK_SIGNING_TOKEN
               valueFrom:
                 secretKeyRef:

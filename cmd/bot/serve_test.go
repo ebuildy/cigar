@@ -92,74 +92,65 @@ func TestQueueWarningIsCounted(t *testing.T) {
 	}
 }
 
-func TestBuildAuthenticators(t *testing.T) {
+func TestBuildAuthenticator(t *testing.T) {
 	signing := "whsec_" + "MDEyMzQ1Njc4OWFiY2RlZg==" // base64("0123456789abcdef")
 
 	tests := []struct {
-		name      string
-		cfg       *config.Config
-		wantNames []string
-		wantErr   bool
+		name     string
+		cfg      *config.Config
+		wantName string
+		wantErr  bool
 	}{
 		{
-			name:      "secret only",
-			cfg:       &config.Config{AuthMethods: []string{"secret"}, WebhookSecret: "x"},
-			wantNames: []string{"secret"},
+			name:     "secret",
+			cfg:      &config.Config{AuthMethod: "secret", WebhookSecret: "x"},
+			wantName: "secret",
 		},
 		{
-			name:      "signature only",
-			cfg:       &config.Config{AuthMethods: []string{"signature"}, WebhookSigningToken: signing},
-			wantNames: []string{"signature"},
+			name:     "signing token",
+			cfg:      &config.Config{AuthMethod: "signing_token", WebhookSigningToken: signing},
+			wantName: "signing_token",
 		},
 		{
-			name:      "ordered pair preserves order",
-			cfg:       &config.Config{AuthMethods: []string{"signature", "secret"}, WebhookSecret: "x", WebhookSigningToken: signing},
-			wantNames: []string{"signature", "secret"},
-		},
-		{
-			name:    "secret enabled but unset",
-			cfg:     &config.Config{AuthMethods: []string{"secret"}},
+			name:    "secret selected but unset",
+			cfg:     &config.Config{AuthMethod: "secret"},
 			wantErr: true,
 		},
 		{
-			name:    "signature enabled but unset",
-			cfg:     &config.Config{AuthMethods: []string{"signature"}},
+			name:    "signing token selected but unset",
+			cfg:     &config.Config{AuthMethod: "signing_token"},
 			wantErr: true,
 		},
 		{
-			name:    "signature token invalid",
-			cfg:     &config.Config{AuthMethods: []string{"signature"}, WebhookSigningToken: "whsec_@@@"},
+			name:    "signing token invalid",
+			cfg:     &config.Config{AuthMethod: "signing_token", WebhookSigningToken: "whsec_@@@"},
 			wantErr: true,
 		},
 		{
-			name:    "empty methods yields error",
-			cfg:     &config.Config{AuthMethods: nil},
+			name:    "unknown method",
+			cfg:     &config.Config{AuthMethod: "bogus", WebhookSecret: "x"},
+			wantErr: true,
+		},
+		{
+			name:    "empty method",
+			cfg:     &config.Config{WebhookSecret: "x"},
 			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			auths, err := buildAuthenticators(tt.cfg)
+			auth, err := buildAuthenticator(tt.cfg)
 			if tt.wantErr {
 				if err == nil {
-					t.Fatalf("expected error, got %v", auths)
+					t.Fatalf("expected error, got %v", auth)
 				}
 				return
 			}
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			var names []string
-			for _, a := range auths {
-				names = append(names, a.Name())
-			}
-			if len(names) != len(tt.wantNames) {
-				t.Fatalf("names = %v, want %v", names, tt.wantNames)
-			}
-			for i := range names {
-				if names[i] != tt.wantNames[i] {
-					t.Fatalf("names = %v, want %v", names, tt.wantNames)
-				}
+			if got := auth.Name(); got != tt.wantName {
+				t.Fatalf("Name() = %q, want %q", got, tt.wantName)
 			}
 		})
 	}

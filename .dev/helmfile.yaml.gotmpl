@@ -310,7 +310,7 @@ releases:
           # Authenticate webhooks with GitLab signing tokens (HMAC-SHA256).
           # deploy-cigar.sh sets a matching signing_token on every project hook.
           webhook:
-            authMethods: [signature]
+            authMethod: signing_token
         # Enable the interactive report commands (reply to the bot's MR note
         # with "help" / "details [job|pod] <name>"). deploy-cigar.sh mints a
         # stable COMMANDS_SIGNING_KEY into cigar-secrets and registers the

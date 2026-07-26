@@ -26,8 +26,9 @@ prometheus:
 pod_resolver: trace
 
 webhook:
-  # Ordered webhook auth methods: secret, signature. Empty defaults to [secret].
-  auth_methods: [secret]
+  # Webhook auth method: "secret" (X-Gitlab-Token, needs WEBHOOK_SECRET) or
+  # "signing_token" (webhook-signature HMAC, needs WEBHOOK_SIGNING_TOKEN).
+  auth_method: secret
 
 report:
   # Throttled-periods ratio above which a job gets a throttling warning.

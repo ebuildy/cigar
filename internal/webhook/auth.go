@@ -43,19 +43,19 @@ func (a secretAuth) Authenticate(c fiber.Ctx) bool {
 	return subtle.ConstantTimeCompare(token, a.secret) == 1
 }
 
-// signatureAuth validates GitLab signing-token HMAC-SHA256 signatures.
+// signingTokenAuth validates GitLab signing-token HMAC-SHA256 signatures.
 // See https://docs.gitlab.com/user/project/integrations/webhooks/#signing-tokens
-type signatureAuth struct {
+type signingTokenAuth struct {
 	key       []byte
 	tolerance time.Duration
 	now       func() time.Time
 }
 
-// NewSignatureAuth builds an Authenticator for GitLab signing tokens. The
+// NewSigningTokenAuth builds an Authenticator for GitLab signing tokens. The
 // token is the whsec_-prefixed value shown in the GitLab UI; it is decoded
 // and validated up front so a misconfiguration fails at startup, not per
 // request.
-func NewSignatureAuth(signingToken string, tolerance time.Duration) (Authenticator, error) {
+func NewSigningTokenAuth(signingToken string, tolerance time.Duration) (Authenticator, error) {
 	raw := strings.TrimPrefix(signingToken, "whsec_")
 	key, err := base64.StdEncoding.DecodeString(raw)
 	if err != nil {
@@ -64,12 +64,12 @@ func NewSignatureAuth(signingToken string, tolerance time.Duration) (Authenticat
 	if len(key) == 0 {
 		return nil, errors.New("signing token decodes to an empty key")
 	}
-	return signatureAuth{key: key, tolerance: tolerance, now: time.Now}, nil
+	return signingTokenAuth{key: key, tolerance: tolerance, now: time.Now}, nil
 }
 
-func (a signatureAuth) Name() string { return "signature" }
+func (a signingTokenAuth) Name() string { return "signing_token" }
 
-func (a signatureAuth) Authenticate(c fiber.Ctx) bool {
+func (a signingTokenAuth) Authenticate(c fiber.Ctx) bool {
 	id := c.Get("webhook-id")
 	tsStr := c.Get("webhook-timestamp")
 	sigHeader := c.Get("webhook-signature")

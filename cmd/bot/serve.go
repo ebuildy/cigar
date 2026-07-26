@@ -102,7 +102,7 @@ func serve(ctx context.Context) error {
 	log.Debug("configuration loaded",
 		zap.String("gitlab_url", cfg.GitLabURL),
 		zap.String("prometheus_url", cfg.PrometheusURL),
-		zap.Strings("auth_methods", cfg.AuthMethods),
+		zap.String("auth_method", cfg.AuthMethod),
 		zap.Float64("throttle_warn_ratio", cfg.ThrottleWarnRatio),
 		zap.Duration("scrape_interval", cfg.ScrapeInterval))
 
@@ -127,11 +127,11 @@ func serve(ctx context.Context) error {
 	go worker(ctx, q, rep, cmdHandler, log.Named("worker"))
 	log.Debug("worker started")
 
-	auths, err := buildAuthenticators(cfg)
+	auth, err := buildAuthenticator(cfg)
 	if err != nil {
 		return err
 	}
-	app := webhook.NewApp(auths, q, log.Named("webhook"), cfg.CommandsEnabled, m)
+	app := webhook.NewApp(auth, q, log.Named("webhook"), cfg.CommandsEnabled, m)
 
 	ops := fiber.New(fiber.Config{ReadTimeout: 5 * time.Second})
 	ops.Get("/healthz", func(c fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
@@ -228,33 +228,25 @@ func process(ctx context.Context, rep *reporter.Reporter, ev webhook.PipelineEve
 	log.Info("report posted")
 }
 
-// buildAuthenticators turns the ordered cfg.AuthMethods into webhook
-// authenticators, failing fast when an enabled method's credential is absent
-// or malformed, or when no method is configured at all.
-func buildAuthenticators(cfg *config.Config) ([]webhook.Authenticator, error) {
-	var auths []webhook.Authenticator
-	for _, m := range cfg.AuthMethods {
-		switch m {
-		case "secret":
-			if cfg.WebhookSecret == "" {
-				return nil, errors.New(`AUTH_METHODS includes "secret" but WEBHOOK_SECRET is not set`)
-			}
-			auths = append(auths, webhook.NewSecretAuth(cfg.WebhookSecret))
-		case "signature":
-			if cfg.WebhookSigningToken == "" {
-				return nil, errors.New(`AUTH_METHODS includes "signature" but WEBHOOK_SIGNING_TOKEN is not set`)
-			}
-			a, err := webhook.NewSignatureAuth(cfg.WebhookSigningToken, webhook.DefaultTimestampTolerance)
-			if err != nil {
-				return nil, fmt.Errorf("signature auth: %w", err)
-			}
-			auths = append(auths, a)
-		default:
-			return nil, fmt.Errorf("unknown auth method %q", m)
+// buildAuthenticator turns cfg.AuthMethod into the webhook authenticator,
+// failing fast when the method's credential is absent or malformed.
+func buildAuthenticator(cfg *config.Config) (webhook.Authenticator, error) {
+	switch cfg.AuthMethod {
+	case "secret":
+		if cfg.WebhookSecret == "" {
+			return nil, errors.New(`WEBHOOK_AUTH_METHOD is "secret" but WEBHOOK_SECRET is not set`)
 		}
+		return webhook.NewSecretAuth(cfg.WebhookSecret), nil
+	case "signing_token":
+		if cfg.WebhookSigningToken == "" {
+			return nil, errors.New(`WEBHOOK_AUTH_METHOD is "signing_token" but WEBHOOK_SIGNING_TOKEN is not set`)
+		}
+		a, err := webhook.NewSigningTokenAuth(cfg.WebhookSigningToken, webhook.DefaultTimestampTolerance)
+		if err != nil {
+			return nil, fmt.Errorf("signing token auth: %w", err)
+		}
+		return a, nil
+	default:
+		return nil, fmt.Errorf("unknown auth method %q", cfg.AuthMethod)
 	}
-	if len(auths) == 0 {
-		return nil, errors.New("no authentication method configured")
-	}
-	return auths, nil
 }

@@ -31,7 +31,7 @@ var settings = []setting{
 	{"prometheus.url", "", "Prometheus base URL (cadvisor + kube-state-metrics)"},
 	{"prometheus.scrape_interval", "30s", "Prometheus scrape interval; query windows are padded by one interval"},
 	{"pod_resolver", "trace", "Pod-correlation strategy: trace or prometheus"},
-	{"webhook.auth_methods", "secret", "Ordered webhook auth methods: secret,signature"},
+	{"webhook.auth_method", "secret", "Webhook auth method: secret or signing_token"},
 	{"report.throttle_warn_ratio", "0.25", "Throttled-periods ratio above which a job gets a warning"},
 	{"report.long_job_duration", "10m", "Job duration above which advice suggests splitting the job"},
 	{"report.memory_pressure_ratio", "0.9", "Peak-memory-to-limit ratio above which OOMKill risk is warned"},
@@ -55,7 +55,7 @@ func flagName(key string) string {
 type Config struct {
 	WebhookSecret       string
 	WebhookSigningToken string
-	AuthMethods         []string
+	AuthMethod          string
 	GitLabURL           string
 	GitLabToken         string
 	PrometheusURL       string
@@ -152,12 +152,10 @@ func Load(v *viper.Viper) (*Config, error) {
 		ListenAddr:    v.GetString("server.listen_addr"),
 		OpsAddr:       v.GetString("server.ops_addr"),
 		ChartFormat:   strings.ToLower(v.GetString("commands.chart_format")),
+		AuthMethod:    authMethod(v),
 	}
 
 	var err error
-	if cfg.AuthMethods, err = authMethods(v); err != nil {
-		return nil, err
-	}
 	if cfg.ThrottleWarnRatio, err = parseRatio(v.GetString("report.throttle_warn_ratio"), "REPORT_THROTTLE_WARN_RATIO", true); err != nil {
 		return nil, err
 	}
@@ -174,6 +172,9 @@ func Load(v *viper.Viper) (*Config, error) {
 		return nil, err
 	}
 
+	if !validAuthMethods[cfg.AuthMethod] {
+		return nil, fmt.Errorf("WEBHOOK_AUTH_METHOD must be one of secret, signing_token, got %q", cfg.AuthMethod)
+	}
 	if !validPodResolvers[cfg.PodResolver] {
 		return nil, fmt.Errorf("POD_RESOLVER must be one of prometheus, trace, got %q", cfg.PodResolver)
 	}
@@ -191,13 +192,14 @@ func Load(v *viper.Viper) (*Config, error) {
 	return cfg, nil
 }
 
-// authMethods reads webhook.auth_methods, accepting either a yaml list (from the
-// file) or a comma-separated string (from env/default).
-func authMethods(v *viper.Viper) ([]string, error) {
-	if s, ok := v.Get("webhook.auth_methods").(string); ok {
-		return parseAuthMethods(s)
+// authMethod reads webhook.auth_method, normalizing case and whitespace. An
+// empty value means "not set" and falls back to the default method.
+func authMethod(v *viper.Viper) string {
+	m := strings.ToLower(strings.TrimSpace(v.GetString("webhook.auth_method")))
+	if m == "" {
+		return defaultAuthMethod
 	}
-	return parseAuthMethods(strings.Join(v.GetStringSlice("webhook.auth_methods"), ","))
+	return m
 }
 
 // parseRatio parses a float in [0,1] when allowZero, else (0,1].
@@ -236,30 +238,10 @@ func parseBool(raw, label string) (bool, error) {
 	return b, nil
 }
 
-var validAuthMethods = map[string]bool{"secret": true, "signature": true}
+// defaultAuthMethod is the legacy shared-secret token, kept as the default for
+// backward compatibility.
+const defaultAuthMethod = "secret"
+
+var validAuthMethods = map[string]bool{defaultAuthMethod: true, "signing_token": true}
 var validPodResolvers = map[string]bool{"prometheus": true, "trace": true}
 var validChartFormats = map[string]bool{"png": true, "svg": true, "markdown": true, "md": true}
-
-// parseAuthMethods parses the comma-separated, ordered AUTH_METHODS list.
-// Order is significant (the handler tries methods in this order). An empty
-// value defaults to the legacy ["secret"] for backward compatibility.
-func parseAuthMethods(raw string) ([]string, error) {
-	if strings.TrimSpace(raw) == "" {
-		return []string{"secret"}, nil
-	}
-	var methods []string
-	for _, part := range strings.Split(raw, ",") {
-		m := strings.ToLower(strings.TrimSpace(part))
-		if m == "" {
-			continue
-		}
-		if !validAuthMethods[m] {
-			return nil, fmt.Errorf("AUTH_METHODS: unknown method %q (allowed: secret, signature)", m)
-		}
-		methods = append(methods, m)
-	}
-	if len(methods) == 0 {
-		return nil, fmt.Errorf("AUTH_METHODS is set but lists no valid methods")
-	}
-	return methods, nil
-}

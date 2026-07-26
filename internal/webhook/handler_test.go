@@ -107,7 +107,7 @@ func TestHandler(t *testing.T) {
 			}
 
 			queue := &fakeQueue{full: tt.queueFull}
-			app := NewApp([]Authenticator{NewSecretAuth(secret)}, queue, zap.NewNop(), false, nil)
+			app := NewApp(NewSecretAuth(secret), queue, zap.NewNop(), false, nil)
 
 			req := httptest.NewRequest(method, "/webhook", strings.NewReader(tt.body))
 			req.Header.Set("X-Gitlab-Token", token)
@@ -186,7 +186,7 @@ func TestRecorderInvoked(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := &fakeRecorder{}
-			app := NewApp([]Authenticator{NewSecretAuth(secret)}, &fakeQueue{}, zap.NewNop(), true, rec)
+			app := NewApp(NewSecretAuth(secret), &fakeQueue{}, zap.NewNop(), true, rec)
 
 			token := secret
 			if tt.token != "" {
@@ -239,7 +239,7 @@ func equalInt64s(a, b []int64) bool {
 // which app.Test cannot observe, so this test drives a real listener.
 func TestOversizedBodyRejected(t *testing.T) {
 	queue := &fakeQueue{}
-	app := NewApp([]Authenticator{NewSecretAuth(secret)}, queue, zap.NewNop(), false, nil)
+	app := NewApp(NewSecretAuth(secret), queue, zap.NewNop(), false, nil)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -273,17 +273,17 @@ func TestOversizedBodyRejected(t *testing.T) {
 	}
 }
 
-// TestHandlerAuthOrdering proves first-match-wins across an ordered list and
-// that a request valid only under a non-enabled method is rejected.
-func TestHandlerAuthOrdering(t *testing.T) {
-	sig, err := NewSignatureAuth(testSigningToken(), 5*time.Minute)
+// TestHandlerSigningTokenAuth proves the configured method is the only one that
+// authenticates: a signing-token app accepts a signed request and rejects one
+// carrying a valid legacy secret token.
+func TestHandlerSigningTokenAuth(t *testing.T) {
+	sig, err := NewSigningTokenAuth(testSigningToken(), 5*time.Minute)
 	if err != nil {
-		t.Fatalf("NewSignatureAuth: %v", err)
+		t.Fatalf("NewSigningTokenAuth: %v", err)
 	}
 	ts := strconv.FormatInt(time.Now().Unix(), 10)
 
-	// signature-only app accepts a signed request but rejects a secret-only one.
-	app := NewApp([]Authenticator{sig}, &fakeQueue{}, zap.NewNop(), false, nil)
+	app := NewApp(sig, &fakeQueue{}, zap.NewNop(), false, nil)
 
 	signed := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(validPayload))
 	signed.Header.Set("webhook-id", "m1")
@@ -308,7 +308,7 @@ func TestHandlerAuthOrdering(t *testing.T) {
 	}
 	_ = resp2.Body.Close()
 	if resp2.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("secret request against signature-only app: status %d, want 401", resp2.StatusCode)
+		t.Fatalf("secret request against signing-token app: status %d, want 401", resp2.StatusCode)
 	}
 }
 
@@ -325,10 +325,9 @@ func (a countingAuth) Authenticate(fiber.Ctx) bool {
 	return a.result
 }
 
-// TestHandlerAuthFirstMatchWins proves the authenticate loop tries
-// authenticators in order, falls through on failure, and short-circuits on the
-// first success.
-func TestHandlerAuthFirstMatchWins(t *testing.T) {
+// TestHandlerAuthDecides proves the single configured authenticator is consulted
+// exactly once per request and its verdict alone decides the outcome.
+func TestHandlerAuthDecides(t *testing.T) {
 	post := func(app *fiber.App) int {
 		req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(validPayload))
 		req.Header.Set("X-Gitlab-Event", "Pipeline Hook")
@@ -340,40 +339,22 @@ func TestHandlerAuthFirstMatchWins(t *testing.T) {
 		return resp.StatusCode
 	}
 
-	// Fall-through: first denies, second accepts -> authenticated, both consulted.
-	var firstCalls, secondCalls int
-	app := NewApp([]Authenticator{
-		countingAuth{result: false, calls: &firstCalls},
-		countingAuth{result: true, calls: &secondCalls},
-	}, &fakeQueue{}, zap.NewNop(), false, nil)
+	var accepted int
+	app := NewApp(countingAuth{result: true, calls: &accepted}, &fakeQueue{}, zap.NewNop(), false, nil)
 	if got := post(app); got != http.StatusOK {
-		t.Fatalf("fall-through: status %d, want 200", got)
+		t.Fatalf("accepting auth: status %d, want 200", got)
 	}
-	if firstCalls != 1 || secondCalls != 1 {
-		t.Fatalf("fall-through calls: first=%d second=%d, want 1/1", firstCalls, secondCalls)
-	}
-
-	// Short-circuit: first accepts -> second must not be consulted.
-	var a1, a2 int
-	app2 := NewApp([]Authenticator{
-		countingAuth{result: true, calls: &a1},
-		countingAuth{result: false, calls: &a2},
-	}, &fakeQueue{}, zap.NewNop(), false, nil)
-	if got := post(app2); got != http.StatusOK {
-		t.Fatalf("short-circuit: status %d, want 200", got)
-	}
-	if a1 != 1 || a2 != 0 {
-		t.Fatalf("short-circuit calls: first=%d second=%d, want 1/0", a1, a2)
+	if accepted != 1 {
+		t.Fatalf("accepting auth consulted %d times, want 1", accepted)
 	}
 
-	// All deny -> 401.
-	var d1, d2 int
-	app3 := NewApp([]Authenticator{
-		countingAuth{result: false, calls: &d1},
-		countingAuth{result: false, calls: &d2},
-	}, &fakeQueue{}, zap.NewNop(), false, nil)
-	if got := post(app3); got != http.StatusUnauthorized {
-		t.Fatalf("all deny: status %d, want 401", got)
+	var denied int
+	app2 := NewApp(countingAuth{result: false, calls: &denied}, &fakeQueue{}, zap.NewNop(), false, nil)
+	if got := post(app2); got != http.StatusUnauthorized {
+		t.Fatalf("denying auth: status %d, want 401", got)
+	}
+	if denied != 1 {
+		t.Fatalf("denying auth consulted %d times, want 1", denied)
 	}
 }
 
@@ -392,7 +373,7 @@ func postNote(t *testing.T, app *fiber.App, body string) int {
 
 func TestNoteHookDisabledIgnored(t *testing.T) {
 	queue := &fakeQueue{}
-	app := NewApp([]Authenticator{NewSecretAuth(secret)}, queue, zap.NewNop(), false, nil)
+	app := NewApp(NewSecretAuth(secret), queue, zap.NewNop(), false, nil)
 	body := `{"object_kind":"note","object_attributes":{"id":1,"note":"help","noteable_type":"MergeRequest","discussion_id":"abc","author_id":9},"project":{"id":7},"merge_request":{"iid":3}}`
 	if s := postNote(t, app, body); s != http.StatusOK {
 		t.Fatalf("status = %d, want 200", s)
@@ -404,7 +385,7 @@ func TestNoteHookDisabledIgnored(t *testing.T) {
 
 func TestNoteHookMatchingEnqueues(t *testing.T) {
 	queue := &fakeQueue{}
-	app := NewApp([]Authenticator{NewSecretAuth(secret)}, queue, zap.NewNop(), true, nil)
+	app := NewApp(NewSecretAuth(secret), queue, zap.NewNop(), true, nil)
 	body := `{"object_kind":"note","object_attributes":{"id":1,"note":"details job build","noteable_type":"MergeRequest","discussion_id":"abc","author_id":9},"project":{"id":7},"merge_request":{"iid":3}}`
 	if s := postNote(t, app, body); s != http.StatusOK {
 		t.Fatalf("status = %d, want 200", s)
@@ -421,7 +402,7 @@ func TestNoteHookMatchingEnqueues(t *testing.T) {
 
 func TestNoteHookNonCommandIgnored(t *testing.T) {
 	queue := &fakeQueue{}
-	app := NewApp([]Authenticator{NewSecretAuth(secret)}, queue, zap.NewNop(), true, nil)
+	app := NewApp(NewSecretAuth(secret), queue, zap.NewNop(), true, nil)
 	body := `{"object_kind":"note","object_attributes":{"id":1,"note":"thanks!","noteable_type":"MergeRequest","discussion_id":"abc","author_id":9},"project":{"id":7},"merge_request":{"iid":3}}`
 	if s := postNote(t, app, body); s != http.StatusOK {
 		t.Fatalf("status = %d, want 200", s)
@@ -433,7 +414,7 @@ func TestNoteHookNonCommandIgnored(t *testing.T) {
 
 func TestNoteHookNonMRIgnored(t *testing.T) {
 	queue := &fakeQueue{}
-	app := NewApp([]Authenticator{NewSecretAuth(secret)}, queue, zap.NewNop(), true, nil)
+	app := NewApp(NewSecretAuth(secret), queue, zap.NewNop(), true, nil)
 	body := `{"object_kind":"note","object_attributes":{"id":1,"note":"help","noteable_type":"Issue","discussion_id":"abc","author_id":9},"project":{"id":7}}`
 	if s := postNote(t, app, body); s != http.StatusOK {
 		t.Fatalf("status = %d, want 200", s)

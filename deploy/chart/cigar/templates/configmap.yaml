@@ -1,3 +1,7 @@
+{{- $authMethod := .Values.config.webhook.authMethod | default "secret" }}
+{{- if not (has $authMethod (list "secret" "signing_token")) }}
+{{- fail (printf "config.webhook.authMethod must be \"secret\" or \"signing_token\", got %q" $authMethod) }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -13,7 +17,7 @@ data:
       scrape_interval: {{ .Values.config.prometheus.scrapeInterval | quote }}
     pod_resolver: {{ .Values.config.podResolver | quote }}
     webhook:
-      auth_methods: {{ .Values.config.webhook.authMethods | default (list "secret") | toJson }}
+      auth_method: {{ $authMethod | quote }}
     report:
       throttle_warn_ratio: {{ .Values.config.report.throttleWarnRatio | quote }}
       long_job_duration: {{ .Values.config.report.longJobDuration | quote }}

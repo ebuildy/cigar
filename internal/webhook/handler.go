@@ -88,36 +88,26 @@ type Recorder interface {
 	RecordUser(userID int64)
 }
 
-// NewApp builds the webhook Fiber app: POST /webhook authenticated by the
-// given authenticators (tried in order, first success wins), with event
-// filtering and a 1 MiB body limit. commandsEnabled gates Note Hook routing.
-// rec may be nil (no metrics).
-func NewApp(auths []Authenticator, queue Enqueuer, log *zap.Logger, commandsEnabled bool, rec Recorder) *fiber.App {
+// NewApp builds the webhook Fiber app: POST /webhook authenticated by auth,
+// with event filtering and a 1 MiB body limit. commandsEnabled gates Note Hook
+// routing. rec may be nil (no metrics).
+func NewApp(auth Authenticator, queue Enqueuer, log *zap.Logger, commandsEnabled bool, rec Recorder) *fiber.App {
 	app := fiber.New(fiber.Config{
 		BodyLimit:    maxBodyBytes,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	})
-	h := &handler{auths: auths, queue: queue, log: log, commandsEnabled: commandsEnabled, rec: rec}
+	h := &handler{auth: auth, queue: queue, log: log, commandsEnabled: commandsEnabled, rec: rec}
 	app.Post("/webhook", h.handle)
 	return app
 }
 
 type handler struct {
-	auths           []Authenticator
+	auth            Authenticator
 	queue           Enqueuer
 	log             *zap.Logger
 	commandsEnabled bool
 	rec             Recorder
-}
-
-func (h *handler) authenticate(c fiber.Ctx) bool {
-	for _, a := range h.auths {
-		if a.Authenticate(c) {
-			return true
-		}
-	}
-	return false
 }
 
 func (h *handler) handle(c fiber.Ctx) error {
@@ -130,10 +120,11 @@ func (h *handler) handle(c fiber.Ctx) error {
 		defer func() { h.rec.RecordWebhook(projectID, c.Response().StatusCode()) }()
 	}
 
-	if !h.authenticate(c) {
+	if !h.auth.Authenticate(c) {
 		// Best-effort parse of the project path from the (already size-limited)
 		// body so the operator can tell which project's hook has a bad token.
 		h.log.Warn("webhook authentication failed",
+			zap.String("auth_method", h.auth.Name()),
 			zap.String("event", c.Get("X-Gitlab-Event")),
 			zap.String("project", projectPath(c.Body())))
 		return c.SendStatus(fiber.StatusUnauthorized) // deliberately no body detail

@@ -71,10 +71,10 @@ func TestSecretAuth(t *testing.T) {
 	}
 }
 
-func TestSignatureAuth(t *testing.T) {
-	a, err := NewSignatureAuth(testSigningToken(), 5*time.Minute)
+func TestSigningTokenAuth(t *testing.T) {
+	a, err := NewSigningTokenAuth(testSigningToken(), 5*time.Minute)
 	if err != nil {
-		t.Fatalf("NewSignatureAuth: %v", err)
+		t.Fatalf("NewSigningTokenAuth: %v", err)
 	}
 	const body = `{"object_kind":"pipeline"}`
 	now := func() string { return strconv.FormatInt(time.Now().Unix(), 10) }
@@ -162,11 +162,11 @@ func TestSignatureAuth(t *testing.T) {
 	}
 }
 
-func TestNewSignatureAuthRejectsBadToken(t *testing.T) {
-	if _, err := NewSignatureAuth("whsec_!!!not-base64!!!", time.Minute); err == nil {
+func TestNewSigningTokenAuthRejectsBadToken(t *testing.T) {
+	if _, err := NewSigningTokenAuth("whsec_!!!not-base64!!!", time.Minute); err == nil {
 		t.Fatal("expected error for non-base64 token")
 	}
-	if _, err := NewSignatureAuth("whsec_", time.Minute); err == nil {
+	if _, err := NewSigningTokenAuth("whsec_", time.Minute); err == nil {
 		t.Fatal("expected error for empty token")
 	}
 }

@@ -64,7 +64,7 @@ WEBHOOK_SECRET=$(kubectl --context "$KUBE_CONTEXT" -n cigar get secret cigar-sec
 echo "    existing WEBHOOK_SECRET: $WEBHOOK_SECRET"
 
 echo "==> Ensuring a stable WEBHOOK_SIGNING_TOKEN (GitLab signing-token auth)"
-# The bot runs with AUTH_METHODS=signature (see helmfile), so it verifies the
+# The bot runs with WEBHOOK_AUTH_METHOD=signing_token (see helmfile), so it verifies the
 # webhook-signature HMAC against this token. It must be the whsec_-prefixed,
 # base64 form GitLab requires (a plain string is rejected with 422), and must
 # stay stable so the signing_token already stored on every project hook keeps

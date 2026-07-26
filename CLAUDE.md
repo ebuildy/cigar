@@ -59,7 +59,7 @@ create it in `docs/` and link it from `README.md` if it's user-facing.
 
 ### Webhook security (non-negotiable)
 
-- Authenticate via `AUTH_METHODS` (ordered, comma-separated: `secret`, `signature`; default `secret`). `secret`: constant-time compare of `X-Gitlab-Token` against `WEBHOOK_SECRET` (an empty configured secret never authenticates). `signature`: GitLab signing token — verify the `webhook-signature` HMAC-SHA256 over `{webhook-id}.{webhook-timestamp}.{body}` using `WEBHOOK_SIGNING_TOKEN` (whsec_), rejecting timestamps outside a 5m window (replay protection). Methods are tried in order; the first that authenticates the request wins; none → `401`, no body detail.
+- Authenticate via `WEBHOOK_AUTH_METHOD`, a single method (`secret` or `signing_token`; default `secret`). `secret`: constant-time compare of `X-Gitlab-Token` against `WEBHOOK_SECRET` (an empty configured secret never authenticates). `signing_token`: GitLab signing token — verify the `webhook-signature` HMAC-SHA256 over `{webhook-id}.{webhook-timestamp}.{body}` using `WEBHOOK_SIGNING_TOKEN` (whsec_), rejecting timestamps outside a 5m window (replay protection). `webhook.NewApp` takes one `Authenticator`; an unauthenticated request → `401`, no body detail.
 - Only accept `X-Gitlab-Event: Pipeline Hook`; ignore everything else with `200` (so GitLab doesn't disable the hook).
 - Enforce a max request body size (1 MiB via Fiber `BodyLimit` → `413`) and read/write timeouts.
 - Serve HTTPS via ingress/TLS termination; the pod listens plain HTTP on `:8080`, metrics/health on `:8081` (`/healthz`, `/readyz`, `/metrics`).
@@ -102,8 +102,8 @@ non-secret setting derives its three forms from one yaml path:
 `$CIGAR_CONFIG`, else `./config.yaml`, else `/etc/cigar/config.yaml`; missing →
 env + defaults. Secrets are **environment-only**, never in the file:
 `WEBHOOK_SECRET`, `WEBHOOK_SIGNING_TOKEN`, `GITLAB_TOKEN`, `COMMANDS_SIGNING_KEY`.
-`WEBHOOK_SECRET`/`WEBHOOK_SIGNING_TOKEN` are required by `serve` only, per enabled
-auth method; `bot run` needs neither.
+`WEBHOOK_SECRET`/`WEBHOOK_SIGNING_TOKEN` are required by `serve` only, whichever
+one `webhook.auth_method` selects; `bot run` needs neither.
 
 ## Go conventions
 

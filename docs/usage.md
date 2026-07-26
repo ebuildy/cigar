@@ -44,9 +44,9 @@ startup on missing/invalid required values.
 | `GITLAB_TOKEN` | **yes** | — | GitLab API token, `api` scope (create/update MR notes) |
 | `PROMETHEUS_URL` | **yes** | — | Prometheus base URL (cadvisor + kube-state-metrics) |
 | `POD_RESOLVER` | no | `trace` | Pod-correlation strategy: `trace` (parse the job's GitLab trace) or `prometheus` (join `kube_pod_labels{label_job_id}`) |
-| `WEBHOOK_AUTH_METHODS` | no | `secret` | Ordered, comma-separated webhook auth methods: `secret`, `signature` |
-| `WEBHOOK_SECRET` | when `secret` enabled | — | Legacy shared secret, compared against the `X-Gitlab-Token` header |
-| `WEBHOOK_SIGNING_TOKEN` | when `signature` enabled | — | GitLab signing token (`whsec_…`) used to verify the `webhook-signature` HMAC |
+| `WEBHOOK_AUTH_METHOD` | no | `secret` | Webhook auth method: `secret` or `signing_token` |
+| `WEBHOOK_SECRET` | with `secret` | — | Legacy shared secret, compared against the `X-Gitlab-Token` header |
+| `WEBHOOK_SIGNING_TOKEN` | with `signing_token` | — | GitLab signing token (`whsec_…`) used to verify the `webhook-signature` HMAC |
 | `REPORT_THROTTLE_WARN_RATIO` | no | `0.25` | Throttled-periods ratio above which a warning is shown |
 | `PROMETHEUS_SCRAPE_INTERVAL` | no | `30s` | Prometheus scrape interval; query windows are padded by one interval |
 | `REPORT_LONG_JOB_DURATION` | no | `10m` | Job duration above which `advise` suggests splitting the job |
@@ -58,27 +58,27 @@ startup on missing/invalid required values.
 | `COMMANDS_SIGNING_KEY` | when `COMMANDS_ENABLED=true` | — | HMAC key signing the report marker; must be a stable random secret shared by every replica (`serve` only — `bot run` never needs it) |
 | `COMMANDS_CHART_FORMAT` | no | `png` | Format for `details` charts: `png` (renders inline reliably in GitLab), `svg` (vector; GitLab's inline SVG rendering is unreliable), or `markdown` (an ASCII line chart embedded directly in the reply — no upload) |
 
-**Webhook authentication.** `WEBHOOK_AUTH_METHODS` lists the enabled methods in priority
-order; the first one that authenticates a request wins, otherwise the request is
-rejected with `401`.
+**Webhook authentication.** `WEBHOOK_AUTH_METHOD` selects the single active
+method; a request it does not authenticate is rejected with `401`.
 
 - `secret` — constant-time compare of the `X-Gitlab-Token` header against
   `WEBHOOK_SECRET`. (An empty configured secret never authenticates.)
-- `signature` — verify the `webhook-signature` header: `HMAC-SHA256` over
+- `signing_token` — verify the `webhook-signature` header: `HMAC-SHA256` over
   `{webhook-id}.{webhook-timestamp}.{body}` keyed by `WEBHOOK_SIGNING_TOKEN`
   (the `whsec_` prefix is stripped and the remainder base64-decoded). Deliveries
   whose timestamp is more than **5 minutes** from now are rejected (replay
   protection).
 
-`signature` is the recommended method; `secret` is GitLab's legacy scheme.
-For a zero-downtime migration, run `WEBHOOK_AUTH_METHODS=secret,signature` with both
-credentials configured, move your hooks to a signing token, then switch to
-`WEBHOOK_AUTH_METHODS=signature`.
+`signing_token` is the recommended method; `secret` is GitLab's legacy scheme.
+To migrate without dropping deliveries, add a signing token to each GitLab hook
+while leaving its secret token in place — GitLab then sends both credentials —
+switch the bot to `WEBHOOK_AUTH_METHOD=signing_token`, then clear the secret
+tokens in GitLab.
 
 ### Deploy with Helm
 
-The chart lives in `deploy/chart/cigar`. Provide `GITLAB_TOKEN` and the enabled
-auth credential(s) via a Kubernetes Secret — either chart-managed
+The chart lives in `deploy/chart/cigar`. Provide `GITLAB_TOKEN` and the auth
+credential of the configured method via a Kubernetes Secret — either chart-managed
 (`secrets.webhookSecret` / `secrets.signingToken` / `secrets.gitlabToken`) or,
 recommended for production, an externally-managed `secrets.existingSecret`.
 
@@ -87,23 +87,24 @@ recommended for production, an externally-managed `secrets.existingSecret`.
 helm upgrade --install cigar deploy/chart/cigar \
   --set config.gitlab.url=https://gitlab.example.com \
   --set config.prometheus.url=http://prometheus-server.monitoring.svc:80 \
-  --set config.webhook.authMethods=signature \
+  --set config.webhook.authMethod=signing_token \
   --set secrets.existingSecret=cigar-secrets
 ```
 
-The referenced Secret must carry the keys the enabled methods need:
+The referenced Secret must carry the key the configured method needs:
 
 ```sh
 kubectl -n cigar create secret generic cigar-secrets \
   --from-literal=GITLAB_TOKEN=glpat-… \
   --from-literal=WEBHOOK_SIGNING_TOKEN="whsec_$(openssl rand -base64 32)"
-  # add --from-literal=WEBHOOK_SECRET=… only if "secret" is an enabled method
+  # use --from-literal=WEBHOOK_SECRET=… instead for authMethod=secret
 ```
 
-The chart injects each env var only when its method is enabled:
-`WEBHOOK_SECRET` when `authMethods` is empty (default) or contains `secret`,
-`WEBHOOK_SIGNING_TOKEN` when it contains `signature`. So enabling `signature`
-does **not** require an existing-secret user to also carry `WEBHOOK_SECRET`.
+The chart injects only the env var its method needs: `WEBHOOK_SECRET` for
+`authMethod: secret` (the default), `WEBHOOK_SIGNING_TOKEN` for
+`authMethod: signing_token`. So choosing `signing_token` does **not** require an
+existing-secret user to also carry `WEBHOOK_SECRET`. Any other value fails the
+`helm template`/`install` with an explicit error.
 
 The chart also ships a Deployment (2 replicas + PDB), Service (`8080` http,
 `8081` ops), Ingress (TLS), NetworkPolicy, and hardened pod security
@@ -127,7 +128,7 @@ kubectl -n cigar logs -f deploy/cigar
 ```
 
 `deploy-cigar.sh` mints and persists a stable `WEBHOOK_SIGNING_TOKEN` in
-`cigar-secrets`, deploys with `WEBHOOK_AUTH_METHODS=signature`, and sets a matching
+`cigar-secrets`, deploys with `WEBHOOK_AUTH_METHOD=signing_token`, and sets a matching
 `signing_token` on each project hook.
 
 ---
@@ -140,7 +141,7 @@ registration is per-project), configure a webhook:
 - **URL** → the bot's webhook endpoint, e.g.
   `https://cigar.example.com/webhook` (in-cluster: `http://cigar.cigar.svc.cluster.local:8080/webhook`).
 - **Trigger** → **Pipeline events** only.
-- **Authentication** → set the credential matching your `WEBHOOK_AUTH_METHODS`:
+- **Authentication** → set the credential matching your `WEBHOOK_AUTH_METHOD`:
   - **Signing token** (recommended): a `whsec_`-prefixed, base64 value equal to
     the bot's `WEBHOOK_SIGNING_TOKEN`. GitLab **rejects** a non-`whsec_` value
     (HTTP `422`).
@@ -236,7 +237,7 @@ Health/ops endpoints are on `:8081`: `/healthz`, `/readyz`, `/metrics`.
 ### Local checks
 
 ```sh
-mise r test        # unit + e2e (race detector); includes signature-auth coverage
+mise r test        # unit + e2e (race detector); includes signing-token auth coverage
 mise r test:e2e    # end-to-end only (mock GitLab + Prometheus)
 mise r lint
 ```

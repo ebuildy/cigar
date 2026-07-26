@@ -301,11 +301,11 @@ func harness(t *testing.T, podResolver string) (*fiber.App, *mockGitLab, *mockPr
 			}
 		}
 	}()
-	sigAuth, err := webhook.NewSignatureAuth(e2eSigningToken(), webhook.DefaultTimestampTolerance)
+	auth, err := webhook.NewSigningTokenAuth(e2eSigningToken(), webhook.DefaultTimestampTolerance)
 	if err != nil {
-		t.Fatalf("signature auth: %v", err)
+		t.Fatalf("signing token auth: %v", err)
 	}
-	return webhook.NewApp([]webhook.Authenticator{sigAuth}, chanQueue(q), log, true, nil), glMock, promMock
+	return webhook.NewApp(auth, chanQueue(q), log, true, nil), glMock, promMock
 }
 
 func TestWebhookToMRNote(t *testing.T) {

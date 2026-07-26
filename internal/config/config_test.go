@@ -1,7 +1,6 @@
 package config
 
 import (
-	"reflect"
 	"testing"
 	"time"
 )
@@ -12,37 +11,39 @@ func loadEnv(t *testing.T) (*Config, error) {
 	return Load(New())
 }
 
-func TestParseAuthMethods(t *testing.T) {
+func TestLoadAuthMethod(t *testing.T) {
 	tests := []struct {
 		name    string
-		raw     string
-		want    []string
+		env     string
+		want    string
 		wantErr bool
 	}{
-		{name: "empty defaults to secret", raw: "", want: []string{"secret"}},
-		{name: "whitespace defaults to secret", raw: "   ", want: []string{"secret"}},
-		{name: "single signature", raw: "signature", want: []string{"signature"}},
-		{name: "ordered pair", raw: "secret,signature", want: []string{"secret", "signature"}},
-		{name: "reversed order preserved", raw: "signature,secret", want: []string{"signature", "secret"}},
-		{name: "trims and lowercases", raw: " Secret , SIGNATURE ", want: []string{"secret", "signature"}},
-		{name: "skips empty entries", raw: "secret,,signature", want: []string{"secret", "signature"}},
-		{name: "unknown method errors", raw: "secret,bogus", wantErr: true},
-		{name: "only commas errors", raw: ",,", wantErr: true},
+		{name: "unset defaults to secret", env: "", want: "secret"},
+		{name: "whitespace defaults to secret", env: "   ", want: "secret"},
+		{name: "explicit secret", env: "secret", want: "secret"},
+		{name: "explicit signing_token", env: "signing_token", want: "signing_token"},
+		{name: "trims and lowercases", env: " Signing_Token ", want: "signing_token"},
+		{name: "unknown method errors", env: "bogus", wantErr: true},
+		{name: "list is no longer accepted", env: "secret,signing_token", wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseAuthMethods(tt.raw)
+			t.Setenv("GITLAB_TOKEN", "tok")
+			t.Setenv("PROMETHEUS_URL", "http://prom")
+			t.Setenv("WEBHOOK_AUTH_METHOD", tt.env)
+
+			cfg, err := loadEnv(t)
 			if tt.wantErr {
 				if err == nil {
-					t.Fatalf("parseAuthMethods(%q) = %v, want error", tt.raw, got)
+					t.Fatalf("WEBHOOK_AUTH_METHOD=%q: want error, got %q", tt.env, cfg.AuthMethod)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("parseAuthMethods(%q): unexpected error %v", tt.raw, err)
+				t.Fatalf("WEBHOOK_AUTH_METHOD=%q: unexpected error %v", tt.env, err)
 			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("parseAuthMethods(%q) = %v, want %v", tt.raw, got, tt.want)
+			if cfg.AuthMethod != tt.want {
+				t.Fatalf("AuthMethod = %q, want %q", cfg.AuthMethod, tt.want)
 			}
 		})
 	}
@@ -53,7 +54,7 @@ func TestNameDerivation(t *testing.T) {
 		{"gitlab.url", "GITLAB_URL", "gitlab-url"},
 		{"prometheus.scrape_interval", "PROMETHEUS_SCRAPE_INTERVAL", "prometheus-scrape-interval"},
 		{"pod_resolver", "POD_RESOLVER", "pod-resolver"},
-		{"webhook.auth_methods", "WEBHOOK_AUTH_METHODS", "webhook-auth-methods"},
+		{"webhook.auth_method", "WEBHOOK_AUTH_METHOD", "webhook-auth-method"},
 		{"report.throttle_warn_ratio", "REPORT_THROTTLE_WARN_RATIO", "report-throttle-warn-ratio"},
 		{"log.level", "LOG_LEVEL", "log-level"},
 	}
@@ -70,7 +71,7 @@ func TestNameDerivation(t *testing.T) {
 func TestSettingsCoverAllKeys(t *testing.T) {
 	want := []string{
 		"gitlab.url", "prometheus.url", "prometheus.scrape_interval", "pod_resolver",
-		"webhook.auth_methods", "report.throttle_warn_ratio", "report.long_job_duration",
+		"webhook.auth_method", "report.throttle_warn_ratio", "report.long_job_duration",
 		"report.memory_pressure_ratio", "commands.enabled", "commands.chart_format",
 		"server.listen_addr", "server.ops_addr", "log.level",
 	}
@@ -119,8 +120,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.ListenAddr != ":8080" || cfg.OpsAddr != ":8081" {
 		t.Errorf("addrs = %q/%q, want :8080/:8081", cfg.ListenAddr, cfg.OpsAddr)
 	}
-	if !reflect.DeepEqual(cfg.AuthMethods, []string{"secret"}) {
-		t.Errorf("AuthMethods = %v, want [secret]", cfg.AuthMethods)
+	if cfg.AuthMethod != "secret" {
+		t.Errorf("AuthMethod = %q, want secret", cfg.AuthMethod)
 	}
 }
 
@@ -143,7 +144,7 @@ func TestLoadAuthFields(t *testing.T) {
 	t.Setenv("GITLAB_TOKEN", "tok")
 	t.Setenv("PROMETHEUS_URL", "http://prom")
 	t.Setenv("WEBHOOK_SIGNING_TOKEN", "whsec_abc")
-	t.Setenv("WEBHOOK_AUTH_METHODS", "signature,secret")
+	t.Setenv("WEBHOOK_AUTH_METHOD", "signing_token")
 
 	cfg, err := loadEnv(t)
 	if err != nil {
@@ -152,8 +153,8 @@ func TestLoadAuthFields(t *testing.T) {
 	if cfg.WebhookSigningToken != "whsec_abc" {
 		t.Fatalf("WebhookSigningToken = %q, want %q", cfg.WebhookSigningToken, "whsec_abc")
 	}
-	if got, want := cfg.AuthMethods, []string{"signature", "secret"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("AuthMethods = %v, want %v", got, want)
+	if cfg.AuthMethod != "signing_token" {
+		t.Fatalf("AuthMethod = %q, want signing_token", cfg.AuthMethod)
 	}
 }
 
