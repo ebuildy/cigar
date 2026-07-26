@@ -108,6 +108,23 @@ service:
   # Health + metrics port.
   opsPort: 8081
 
+# PodMonitor for the Prometheus Operator, scraping the cigar_ ops metrics from
+# the ops port (/metrics). Disabled by default so the chart does not require the
+# monitoring.coreos.com CRDs to be installed.
+podMonitor:
+  enabled: false
+  # Namespace for the PodMonitor (defaults to the release namespace).
+  namespace: ""
+  # Extra labels — e.g. the label your Prometheus Operator selects on
+  # (commonly `release: kube-prometheus-stack`).
+  labels: {}
+  interval: 30s
+  scrapeTimeout: 10s
+  # relabel_configs applied before scraping.
+  relabelings: []
+  # metric_relabel_configs applied after scraping.
+  metricRelabelings: []
+
 ingress:
   enabled: false
   className: ""

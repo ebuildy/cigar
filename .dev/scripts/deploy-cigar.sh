@@ -60,12 +60,8 @@ kubectl --context "$KUBE_CONTEXT" create namespace cigar --dry-run=client -o yam
 # leaving already-registered hooks untouched) is what caused 401s on redeploy.
 WEBHOOK_SECRET=$(kubectl --context "$KUBE_CONTEXT" -n cigar get secret cigar-secrets \
   -o jsonpath='{.data.WEBHOOK_SECRET}' 2>/dev/null | base64 -d || true)
-if [[ -z "$WEBHOOK_SECRET" ]]; then
-  WEBHOOK_SECRET=$(openssl rand -hex 32)
-  echo "    minted a new WEBHOOK_SECRET"
-else
-  echo "    reusing existing WEBHOOK_SECRET"
-fi
+
+echo "    existing WEBHOOK_SECRET: $WEBHOOK_SECRET"
 
 echo "==> Ensuring a stable WEBHOOK_SIGNING_TOKEN (GitLab signing-token auth)"
 # The bot runs with AUTH_METHODS=signature (see helmfile), so it verifies the
@@ -75,12 +71,8 @@ echo "==> Ensuring a stable WEBHOOK_SIGNING_TOKEN (GitLab signing-token auth)"
 # matching — same rationale as WEBHOOK_SECRET above.
 WEBHOOK_SIGNING_TOKEN=$(kubectl --context "$KUBE_CONTEXT" -n cigar get secret cigar-secrets \
   -o jsonpath='{.data.WEBHOOK_SIGNING_TOKEN}' 2>/dev/null | base64 -d || true)
-if [[ -z "$WEBHOOK_SIGNING_TOKEN" ]]; then
-  WEBHOOK_SIGNING_TOKEN="whsec_$(openssl rand -base64 32)"
-  echo "    minted a new WEBHOOK_SIGNING_TOKEN"
-else
-  echo "    reusing existing WEBHOOK_SIGNING_TOKEN"
-fi
+
+echo "    existing WEBHOOK_SIGNING_TOKEN: $WEBHOOK_SIGNING_TOKEN"
 
 echo "==> Ensuring a stable COMMANDS_SIGNING_KEY (interactive-command marker HMAC)"
 # The bot signs its report-note marker with this key and verifies command
@@ -155,6 +147,7 @@ for h in json.load(sys.stdin):
     fi
     curl -sf -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
       -X POST "$API/projects/$id/hooks" \
+      --data-urlencode "name=cigar" \
       --data-urlencode "url=$WEBHOOK_URL" \
       --data-urlencode "signing_token=$WEBHOOK_SIGNING_TOKEN" \
       --data-urlencode "pipeline_events=true" \

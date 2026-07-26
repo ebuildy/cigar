@@ -17,6 +17,20 @@ const (
 	KindAdvise
 )
 
+// String returns the command verb as a stable, low-cardinality metric label.
+func (k Kind) String() string {
+	switch k {
+	case KindHelp:
+		return "help"
+	case KindDetails:
+		return "details"
+	case KindAdvise:
+		return "advise"
+	default:
+		return "unknown"
+	}
+}
+
 // TargetType is the resolved kind of a details target.
 type TargetType int
 

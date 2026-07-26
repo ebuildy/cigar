@@ -31,6 +31,9 @@ type PipelineEvent struct {
 	Project struct {
 		ID int64 `json:"id"`
 	} `json:"project"`
+	User *struct {
+		ID int64 `json:"id"` // pipeline triggerer, for adoption metrics
+	} `json:"user"`
 	MergeRequest *struct {
 		IID int64 `json:"iid"`
 	} `json:"merge_request"`
@@ -53,6 +56,20 @@ type notePayload struct {
 	} `json:"merge_request"`
 }
 
+// projectPath best-effort extracts project.path_with_namespace from any GitLab
+// webhook body (pipeline and note hooks both carry it). Returns "" when the
+// body is absent, unparseable, or lacks the field — never errors, so it is safe
+// to call on unauthenticated requests for logging only.
+func projectPath(body []byte) string {
+	var p struct {
+		Project struct {
+			PathWithNamespace string `json:"path_with_namespace"`
+		} `json:"project"`
+	}
+	_ = json.Unmarshal(body, &p)
+	return p.Project.PathWithNamespace
+}
+
 // Event is a unit of work for the worker: exactly one field is non-nil.
 type Event struct {
 	Pipeline *PipelineEvent
@@ -64,16 +81,24 @@ type Enqueuer interface {
 	Enqueue(ev Event) bool
 }
 
+// Recorder records ops metrics from webhook deliveries. Optional (nil = no-op).
+// It keeps this package ignorant of Prometheus — telemetry satisfies it.
+type Recorder interface {
+	RecordWebhook(projectID int64, status int)
+	RecordUser(userID int64)
+}
+
 // NewApp builds the webhook Fiber app: POST /webhook authenticated by the
 // given authenticators (tried in order, first success wins), with event
 // filtering and a 1 MiB body limit. commandsEnabled gates Note Hook routing.
-func NewApp(auths []Authenticator, queue Enqueuer, log *zap.Logger, commandsEnabled bool) *fiber.App {
+// rec may be nil (no metrics).
+func NewApp(auths []Authenticator, queue Enqueuer, log *zap.Logger, commandsEnabled bool, rec Recorder) *fiber.App {
 	app := fiber.New(fiber.Config{
 		BodyLimit:    maxBodyBytes,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	})
-	h := &handler{auths: auths, queue: queue, log: log, commandsEnabled: commandsEnabled}
+	h := &handler{auths: auths, queue: queue, log: log, commandsEnabled: commandsEnabled, rec: rec}
 	app.Post("/webhook", h.handle)
 	return app
 }
@@ -83,6 +108,7 @@ type handler struct {
 	queue           Enqueuer
 	log             *zap.Logger
 	commandsEnabled bool
+	rec             Recorder
 }
 
 func (h *handler) authenticate(c fiber.Ctx) bool {
@@ -95,19 +121,32 @@ func (h *handler) authenticate(c fiber.Ctx) bool {
 }
 
 func (h *handler) handle(c fiber.Ctx) error {
+	// Record one webhook-call metric per request, tagged with the project (0
+	// until the payload is parsed) and the final HTTP status — so 401s and other
+	// pre-parse failures are counted too. The defer reads the status after the
+	// handler has set it via SendStatus.
+	var projectID int64
+	if h.rec != nil {
+		defer func() { h.rec.RecordWebhook(projectID, c.Response().StatusCode()) }()
+	}
+
 	if !h.authenticate(c) {
-		h.log.Debug("webhook authentication failed", zap.String("event", c.Get("X-Gitlab-Event")))
+		// Best-effort parse of the project path from the (already size-limited)
+		// body so the operator can tell which project's hook has a bad token.
+		h.log.Warn("webhook authentication failed",
+			zap.String("event", c.Get("X-Gitlab-Event")),
+			zap.String("project", projectPath(c.Body())))
 		return c.SendStatus(fiber.StatusUnauthorized) // deliberately no body detail
 	}
 
 	switch c.Get("X-Gitlab-Event") {
 	case "Pipeline Hook":
-		return h.handlePipeline(c)
+		return h.handlePipeline(c, &projectID)
 	case "Note Hook":
 		if !h.commandsEnabled {
 			return c.SendStatus(fiber.StatusOK)
 		}
-		return h.handleNote(c)
+		return h.handleNote(c, &projectID)
 	default:
 		// Ignore other event types with 200 so GitLab doesn't disable the hook.
 		h.log.Debug("ignoring unsupported event", zap.String("event", c.Get("X-Gitlab-Event")))
@@ -115,11 +154,16 @@ func (h *handler) handle(c fiber.Ctx) error {
 	}
 }
 
-func (h *handler) handlePipeline(c fiber.Ctx) error {
+func (h *handler) handlePipeline(c fiber.Ctx, projectID *int64) error {
 	var ev PipelineEvent
 	if err := json.Unmarshal(c.Body(), &ev); err != nil {
 		h.log.Warn("malformed pipeline payload", zap.Error(err))
 		return c.SendStatus(fiber.StatusBadRequest)
+	}
+	*projectID = ev.Project.ID
+
+	if h.rec != nil && ev.User != nil {
+		h.rec.RecordUser(ev.User.ID)
 	}
 
 	// merge_request may be nil when the branch was pushed before the MR was
@@ -132,7 +176,8 @@ func (h *handler) handlePipeline(c fiber.Ctx) error {
 	}
 
 	if !h.queue.Enqueue(Event{Pipeline: &ev}) {
-		h.log.Warn("queue full, dropping event",
+		// Dropped for good: GitLab does not retry, so this pipeline gets no report.
+		h.log.Error("queue full, dropping event",
 			zap.Int64("pipeline_id", ev.ObjectAttributes.ID), zap.Int64("project_id", ev.Project.ID))
 		return c.SendStatus(fiber.StatusServiceUnavailable)
 	}
@@ -143,11 +188,16 @@ func (h *handler) handlePipeline(c fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusOK)
 }
 
-func (h *handler) handleNote(c fiber.Ctx) error {
+func (h *handler) handleNote(c fiber.Ctx, projectID *int64) error {
 	var p notePayload
 	if err := json.Unmarshal(c.Body(), &p); err != nil {
 		h.log.Warn("malformed note payload", zap.Error(err))
 		return c.SendStatus(fiber.StatusBadRequest)
+	}
+	*projectID = p.Project.ID
+
+	if h.rec != nil {
+		h.rec.RecordUser(p.ObjectAttributes.AuthorID)
 	}
 
 	if p.ObjectAttributes.NoteableType != "MergeRequest" || p.MergeRequest == nil {
@@ -168,7 +218,7 @@ func (h *handler) handleNote(c fiber.Ctx) error {
 	}
 
 	if !h.queue.Enqueue(Event{Note: ne}) {
-		h.log.Warn("queue full, dropping note command",
+		h.log.Error("queue full, dropping note command",
 			zap.Int64("note_id", ne.NoteID), zap.Int64("project_id", ne.ProjectID))
 		return c.SendStatus(fiber.StatusServiceUnavailable)
 	}

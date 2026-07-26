@@ -155,51 +155,126 @@ releases:
                   ip = {{ env "AGENTGATEWAY_CLUSTER_IP" | default "10.96.194.60" | quote }}
                   hostnames = ["gitlab.kind.local"]
 
-  # Minimal Prometheus for cigar to query: cadvisor comes free from every
-  # kubelet (server's default scrape config already includes the
-  # kubernetes-nodes-cadvisor job), kube-state-metrics (subchart, kept
-  # enabled) supplies request/limit metrics. alertmanager/node-exporter/
-  # pushgateway are default-enabled upstream but unneeded here.
+  # kube-prometheus-stack: the Prometheus Operator + an operator-managed
+  # Prometheus + Grafana + kube-state-metrics. Replaces the previous minimal
+  # prometheus chart and the standalone grafana release, so the chart's
+  # PodMonitor (deploy/chart/cigar) is scraped by a real operator Prometheus.
+  # cadvisor comes from the kubelet ServiceMonitor; kube-state-metrics supplies
+  # request/limit series. Grafana ships the cigar dashboard preloaded and is
+  # exposed at http://grafana.kind.local (login admin/admin); the Prometheus UI
+  # at http://prometheus.kind.local — both through the agentgateway Gateway.
   - name: prometheus
     namespace: monitoring
     createNamespace: true
-    chart: prometheus-community/prometheus
-    version: 29.18.0
+    chart: prometheus-community/kube-prometheus-stack
+    version: 87.19.1
     needs:
       - agentgateway-system/agentgateway-config
     values:
-      - alertmanager:
+      - crds:
+          enabled: true
+        # Trim the footprint for a laptop kind cluster.
+        alertmanager:
           enabled: false
         prometheus-node-exporter:
           enabled: false
-        prometheus-pushgateway:
+        # kind doesn't expose these control-plane components as scrapeable
+        # endpoints — drop their (always-down) targets to keep the UI clean.
+        kubeControllerManager:
+          enabled: false
+        kubeScheduler:
+          enabled: false
+        kubeEtcd:
+          enabled: false
+        kubeProxy:
           enabled: false
         kube-state-metrics:
           enabled: true
-        server:
-          persistentVolume:
-            enabled: false
-          retention: 6h
+        prometheusOperator:
           resources:
             requests:
-              cpu: 100m
-              memory: 256Mi
+              cpu: 50m
+              memory: 128Mi
             limits:
-              cpu: 500m
-              memory: 512Mi
-          # Exposed for convenience (browsing the UI, poking at PromQL) —
-          # cigar itself talks to the in-cluster Service directly, not
-          # through this. Same cross-namespace attachment as gitlab's
-          # HTTPRoute: the Gateway lives in agentgateway-system.
-          route:
-            main:
-              enabled: true
+              memory: 256Mi
+        prometheus:
+          prometheusSpec:
+            retention: 6h
+            # Select every PodMonitor/ServiceMonitor in the cluster, not only
+            # ones labelled release=prometheus — so cigar's PodMonitor (which
+            # carries no extra label) is discovered.
+            podMonitorSelectorNilUsesHelmValues: false
+            serviceMonitorSelectorNilUsesHelmValues: false
+            ruleSelectorNilUsesHelmValues: false
+            probeSelectorNilUsesHelmValues: false
+            resources:
+              requests:
+                cpu: 100m
+                memory: 400Mi
+              limits:
+                memory: 900Mi
+        grafana:
+          enabled: true
+          adminUser: admin
+          adminPassword: admin
+          persistence:
+            enabled: false
+          # Provision the cigar dashboard from the repo artifact (the same JSON
+          # the prod deploy ships) via a file provider, alongside the stack's
+          # own sidecar-loaded dashboards.
+          dashboardProviders:
+            dashboardproviders.yaml:
+              apiVersion: 1
+              providers:
+                - name: cigar
+                  orgId: 1
+                  folder: Cigar
+                  type: file
+                  disableDeletion: false
+                  editable: true
+                  options:
+                    path: /var/lib/grafana/dashboards/cigar
+          dashboards:
+            cigar:
+              cigar-ops:
+                json: |
+{{ readFile "../deploy/grafana/cigar-dashboard.json" | indent 18 }}
+        # Expose Grafana + the Prometheus UI through the agentgateway Gateway.
+        # The *.kind.local hostnames here are what .dev/scripts/setup-hosts.sh
+        # scans for.
+        extraManifests:
+          - apiVersion: gateway.networking.k8s.io/v1
+            kind: HTTPRoute
+            metadata:
+              name: grafana
+              namespace: monitoring
+            spec:
+              parentRefs:
+                - name: gateway
+                  namespace: agentgateway-system
+                  sectionName: http
+              hostnames:
+                - grafana.kind.local
+              rules:
+                - backendRefs:
+                    - name: prometheus-grafana
+                      port: 80
+          - apiVersion: gateway.networking.k8s.io/v1
+            kind: HTTPRoute
+            metadata:
+              name: prometheus
+              namespace: monitoring
+            spec:
               parentRefs:
                 - name: gateway
                   namespace: agentgateway-system
                   sectionName: http
               hostnames:
                 - prometheus.kind.local
+              rules:
+                - backendRefs:
+                    - name: prometheus-kube-prometheus-prometheus
+                      port: 9090
 
   # The bot itself (see ../../deploy/chart/cigar and CLAUDE.md). Unlike
   # the other releases, this isn't self-sufficient: it needs a locally
@@ -220,9 +295,12 @@ releases:
           tag: dev
           pullPolicy: Never
         config:
-          gitlabUrl: http://gitlab.kind.local
-          prometheusUrl: http://prometheus-server.monitoring.svc:80
-          logLevel: debug
+          gitlab:
+            url: http://gitlab.kind.local
+          prometheus:
+            url: http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090
+          log:
+            level: debug
           podResolver: trace
           throttleWarnRatio: "0.25"
           scrapeInterval: 60s
@@ -231,7 +309,8 @@ releases:
           chartFormat: markdown
           # Authenticate webhooks with GitLab signing tokens (HMAC-SHA256).
           # deploy-cigar.sh sets a matching signing_token on every project hook.
-          authMethods: signature
+          webhook:
+            authMethods: [signature]
         # Enable the interactive report commands (reply to the bot's MR note
         # with "help" / "details [job|pod] <name>"). deploy-cigar.sh mints a
         # stable COMMANDS_SIGNING_KEY into cigar-secrets and registers the
@@ -253,3 +332,5 @@ releases:
         # overrides that'd otherwise be needed.
         networkPolicy:
           enabled: false
+        podMonitor:
+          enabled: true

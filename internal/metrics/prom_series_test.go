@@ -32,7 +32,7 @@ func rangeServer(t *testing.T, seen *[]string) *httptest.Server {
 func TestPodSeries(t *testing.T) {
 	var seen []string
 	srv := rangeServer(t, &seen)
-	src, err := NewPromSource(srv.URL, 30*time.Second, zap.NewNop())
+	src, err := NewPromSource(srv.URL, 30*time.Second, zap.NewNop(), nil)
 	if err != nil {
 		t.Fatalf("NewPromSource: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestPodSeries(t *testing.T) {
 func TestPodActiveSpan(t *testing.T) {
 	var seen []string
 	srv := rangeServer(t, &seen)
-	src, err := NewPromSource(srv.URL, 30*time.Second, zap.NewNop())
+	src, err := NewPromSource(srv.URL, 30*time.Second, zap.NewNop(), nil)
 	if err != nil {
 		t.Fatalf("NewPromSource: %v", err)
 	}

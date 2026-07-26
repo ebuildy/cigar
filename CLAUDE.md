@@ -32,6 +32,7 @@ internal/
   reporter/              # orchestration shared by serve worker + run CLI: jobs -> pods -> usage -> report.Data
   gitlab/                # GitLab API client: jobs list, MR lookup, notes create/update
   metrics/               # Prometheus client + PromQL queries, per-job aggregation
+  telemetry/             # bot's own ops metrics (cigar_*) on a private registry, /metrics on :8081
   correlate/             # map GitLab job -> k8s pod/containers (labels/annotations)
   report/                # markdown rendering (templates), advice engine, thresholds
   config/                # env-based config, validation
@@ -109,6 +110,7 @@ auth method; `bot run` needs neither.
 - Go ≥ 1.26, modules; `go.mod` module path `gitlab.com/<group>/gitlab-ci-resources-bot`.
 - Standard library first; approved deps: `gofiber/fiber/v3` (HTTP server), `spf13/cobra` (CLI), `spf13/viper` (config), `client-go` (GitLab), `prometheus/client_golang` (API + own metrics), `go.uber.org/zap` for logging (structured JSON to stdout).
 - Logging: `go.uber.org/zap`, JSON encoding, written to **stdout**. The level is a persistent root flag `--log-level` (`debug`/`info`/`warn`/`error`), defaulting to `$LOG_LEVEL` then `info`; the root command builds the logger in `PersistentPreRunE` (`cmd/bot/deps.go:newLogger`) and installs it via `zap.ReplaceGlobals`. Pass `*zap.Logger` down through constructors; use typed fields (`zap.String`, `zap.Int64`, `zap.Error`), never loose key/value pairs. Tests use `zap.NewNop()`.
+  Name the logger per subsystem when wiring it (`log.Named("webhook")`, `"queue"`, `"worker"`, `"gitlab"`, `"metrics"`, `"correlate"`, `"reporter"`, `"command"`) — the name is the `name` label of `cigar_log_total`, so a new subsystem that reuses the parent logger silently lands in `root`. `serve` wraps the root logger with `telemetry.Metrics.LogOption()` (a `zapcore.Core` proxy in `internal/telemetry/logcore.go`) which counts every warn-or-worse entry *before* the level filter — never bypass it by building a second logger.
 - Errors: wrap with `fmt.Errorf("...: %w", err)`; no `panic` outside `main`.
 - Context everywhere: every outbound call takes `context.Context` with timeout.
 - Report rendering via `text/template` with golden-file tests (`testdata/*.md`).

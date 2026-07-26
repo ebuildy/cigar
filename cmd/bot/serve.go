@@ -4,15 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/adaptor"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/command"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/config"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/reporter"
+	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/telemetry"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/webhook"
 )
 
@@ -30,13 +33,54 @@ func newServeCmd() *cobra.Command {
 	}
 }
 
+const (
+	// queueSize is the worker queue's buffer: events beyond it are dropped.
+	queueSize = 128
+	// queueWarnPercent is the fill level at which Enqueue warns the operator
+	// that the worker is falling behind and drops are close.
+	queueWarnPercent = 80
+)
+
 // queue is a bounded in-memory queue between the webhook handler and the
 // worker; Enqueue never blocks.
-type queue chan webhook.Event
+type queue struct {
+	ch     chan webhook.Event
+	log    *zap.Logger
+	warnAt int // depth at which the queue counts as nearly full
 
-func (q queue) Enqueue(ev webhook.Event) bool {
+	// warned is set while a "nearly full" warning is outstanding, so a queue
+	// hovering above the threshold logs once per crossing instead of once per
+	// event. Racing enqueues may cost an extra line; that is cheaper than a
+	// lock on the hot path.
+	warned atomic.Bool
+}
+
+func newQueue(size int, log *zap.Logger) *queue {
+	return &queue{
+		ch:  make(chan webhook.Event, size),
+		log: log,
+		// Round up, so warnAt is the first depth at or above the percentage.
+		warnAt: (size*queueWarnPercent + 99) / 100,
+	}
+}
+
+// Enqueue hands an event to the worker, reporting false when the buffer is
+// full (the caller drops the event). It never blocks.
+func (q *queue) Enqueue(ev webhook.Event) bool {
 	select {
-	case q <- ev:
+	case q.ch <- ev:
+		depth := len(q.ch)
+		switch {
+		case depth >= q.warnAt:
+			if q.warned.CompareAndSwap(false, true) {
+				q.log.Warn("worker queue nearly full",
+					zap.Int("depth", depth),
+					zap.Int("capacity", cap(q.ch)),
+					zap.Int("warn_at", q.warnAt))
+			}
+		default:
+			q.warned.Store(false)
+		}
 		return true
 	default:
 		return false
@@ -48,14 +92,21 @@ func serve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	log := logger
+	// Wrap the root logger before anything else uses it, so every warn-or-worse
+	// entry from here down — including those of the loggers derived below — is
+	// counted into cigar_log_total.
+	m := telemetry.New()
+	log := logger.WithOptions(m.LogOption())
+	zap.ReplaceGlobals(log)
+
 	log.Debug("configuration loaded",
 		zap.String("gitlab_url", cfg.GitLabURL),
 		zap.String("prometheus_url", cfg.PrometheusURL),
 		zap.Strings("auth_methods", cfg.AuthMethods),
 		zap.Float64("throttle_warn_ratio", cfg.ThrottleWarnRatio),
 		zap.Duration("scrape_interval", cfg.ScrapeInterval))
-	rep, err := newReporter(cfg, log)
+
+	rep, err := newReporter(cfg, log, m)
 	if err != nil {
 		return err
 	}
@@ -65,27 +116,27 @@ func serve(ctx context.Context) error {
 	}
 	var cmdHandler *command.Handler
 	if cfg.CommandsEnabled {
-		cmdHandler, err = newCommandHandler(ctx, cfg, log, rep)
+		cmdHandler, err = newCommandHandler(ctx, cfg, log, rep, m)
 		if err != nil {
 			return err
 		}
 		log.Info("interactive commands enabled")
 	}
 
-	q := make(queue, 128)
-	go worker(ctx, q, rep, cmdHandler, log)
+	q := newQueue(queueSize, log.Named("queue"))
+	go worker(ctx, q, rep, cmdHandler, log.Named("worker"))
 	log.Debug("worker started")
 
 	auths, err := buildAuthenticators(cfg)
 	if err != nil {
 		return err
 	}
-	app := webhook.NewApp(auths, q, log, cfg.CommandsEnabled)
+	app := webhook.NewApp(auths, q, log.Named("webhook"), cfg.CommandsEnabled, m)
 
 	ops := fiber.New(fiber.Config{ReadTimeout: 5 * time.Second})
 	ops.Get("/healthz", func(c fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
 	ops.Get("/readyz", func(c fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
-	// TODO: promhttp handler on /metrics once own metrics are added.
+	ops.Get("/metrics", adaptor.HTTPHandler(m.Handler()))
 
 	listenCfg := fiber.ListenConfig{
 		DisableStartupMessage: true,
@@ -115,14 +166,14 @@ func serve(ctx context.Context) error {
 
 // worker consumes validated pipeline and note events, posting MR comments and
 // handling interactive commands respectively.
-func worker(ctx context.Context, q queue, rep *reporter.Reporter, cmd *command.Handler, log *zap.Logger) {
+func worker(ctx context.Context, q *queue, rep *reporter.Reporter, cmd *command.Handler, log *zap.Logger) {
 	seen := make(map[int64]bool) // note IDs already handled (dedup retried deliveries)
 	for {
 		select {
 		case <-ctx.Done():
 			log.Debug("worker stopping", zap.Error(ctx.Err()))
 			return
-		case ev := <-q:
+		case ev := <-q.ch:
 			switch {
 			case ev.Pipeline != nil:
 				process(ctx, rep, *ev.Pipeline, log)

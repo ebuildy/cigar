@@ -243,7 +243,7 @@ func harness(t *testing.T, podResolver string) (*fiber.App, *mockGitLab, *mockPr
 			t.Fatalf("resolver: %v", err)
 		}
 	}
-	source, err := metrics.NewPromSource(promSrv.URL, 30*time.Second, log)
+	source, err := metrics.NewPromSource(promSrv.URL, 30*time.Second, log, nil)
 	if err != nil {
 		t.Fatalf("source: %v", err)
 	}
@@ -305,7 +305,7 @@ func harness(t *testing.T, podResolver string) (*fiber.App, *mockGitLab, *mockPr
 	if err != nil {
 		t.Fatalf("signature auth: %v", err)
 	}
-	return webhook.NewApp([]webhook.Authenticator{sigAuth}, chanQueue(q), log, true), glMock, promMock
+	return webhook.NewApp([]webhook.Authenticator{sigAuth}, chanQueue(q), log, true, nil), glMock, promMock
 }
 
 func TestWebhookToMRNote(t *testing.T) {
