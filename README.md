@@ -145,6 +145,34 @@ Releases are handled by [GoReleaser](https://goreleaser.com): push a `v*` tag an
 - TLS terminates at the ingress; the pod listens plain HTTP on `:8080`, ops on `:8081`.
 - Tokens are injected via Secret and never logged; payloads are not logged at info level.
 
+## Metrics
+
+The bot exposes its own operational metrics in Prometheus format at `/metrics`
+on the ops port (`:8081`), all prefixed `cigar_`:
+
+| Metric | Type | Labels | Meaning |
+| --- | --- | --- | --- |
+| `cigar_webhook_calls_total` | counter | `project`, `status` | webhook deliveries by HTTP status (`project` is `0` when auth fails before the payload is parsed, e.g. `401`) |
+| `cigar_command_calls_total` | counter | `project`, `command` | interactive commands executed (`command` = `help`/`details`/`advise`) |
+| `cigar_log_total` | counter | `level`, `name` | warn-or-worse log entries by level and logger name (`webhook`, `queue`, `worker`, `gitlab`, …) — counted whatever `--log-level` is set to |
+| `cigar_prometheus_query_duration_seconds_total` | counter | — | cumulative wall-clock seconds spent in Prometheus queries |
+| `cigar_users_active` | gauge | — | distinct GitLab users seen since process start (adoption; resets on restart) |
+
+Standard `go_*` / `process_*` runtime collectors are exposed alongside them.
+
+Scrape them with a Prometheus Operator **PodMonitor** — ship it with the chart
+via `--set podMonitor.enabled=true` (add `podMonitor.labels.release=<your-prometheus>`
+so the operator selects it). Without the operator, annotate-based scraping works
+too (`prometheus.io/scrape` on the pod, port `ops`, path `/metrics`).
+
+A ready-made Grafana dashboard lives at
+[`deploy/grafana/cigar-dashboard.json`](deploy/grafana/cigar-dashboard.json) —
+import it and pick your Prometheus data source.
+
+See [`docs/monitoring.md`](docs/monitoring.md) for the full metric-by-metric
+reference (semantics, caveats, cardinality), useful PromQL, and ready-to-apply
+`PrometheusRule` alert examples.
+
 ## Deployment
 
 Helm chart in `deploy/chart/cigar`: Deployment (2 replicas, PDB), Service, Ingress (TLS), NetworkPolicy (egress restricted to DNS, GitLab and Prometheus), resource requests/limits set (practice what we preach), `runAsNonRoot` (distroless uid 65532), read-only rootfs, seccomp `RuntimeDefault`.

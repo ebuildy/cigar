@@ -15,6 +15,7 @@ import (
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/gitlab"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/metrics"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/reporter"
+	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/telemetry"
 )
 
 // newLogger builds the zap JSON logger writing to stdout at the given level
@@ -40,25 +41,26 @@ func newLogger(level string) (*zap.Logger, error) {
 }
 
 // newReporter wires the concrete GitLab and Prometheus clients into the
-// reporter shared by `serve` and `run`.
-func newReporter(cfg *config.Config, log *zap.Logger) (*reporter.Reporter, error) {
-	gl, err := gitlab.New(cfg.GitLabURL, cfg.GitLabToken, log)
+// reporter shared by `serve` and `run`. obs (nil for `run`) records Prometheus
+// query timings.
+func newReporter(cfg *config.Config, log *zap.Logger, obs metrics.QueryObserver) (*reporter.Reporter, error) {
+	gl, err := gitlab.New(cfg.GitLabURL, cfg.GitLabToken, log.Named("gitlab"))
 	if err != nil {
 		return nil, err
 	}
 	var resolver correlate.Resolver
 	switch cfg.PodResolver {
 	case "trace":
-		resolver = correlate.NewTraceResolver(gl, log)
+		resolver = correlate.NewTraceResolver(gl, log.Named("correlate"))
 	case "prometheus":
-		resolver, err = correlate.NewPromResolver(cfg.PrometheusURL, cfg.ScrapeInterval, log)
+		resolver, err = correlate.NewPromResolver(cfg.PrometheusURL, cfg.ScrapeInterval, log.Named("correlate"))
 		if err != nil {
 			return nil, err
 		}
 	default:
 		return nil, fmt.Errorf("unknown pod resolver %q", cfg.PodResolver)
 	}
-	source, err := metrics.NewPromSource(cfg.PrometheusURL, cfg.ScrapeInterval, log)
+	source, err := metrics.NewPromSource(cfg.PrometheusURL, cfg.ScrapeInterval, log.Named("metrics"), obs)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +70,7 @@ func newReporter(cfg *config.Config, log *zap.Logger) (*reporter.Reporter, error
 		Metrics:           source,
 		ThrottleWarnRatio: cfg.ThrottleWarnRatio,
 		SigningKey:        []byte(cfg.CommandsSigningKey),
-		Log:               log,
+		Log:               log.Named("reporter"),
 	}, nil
 }
 
@@ -85,8 +87,8 @@ func newAdviceEngine(cfg *config.Config) (*advice.Engine, error) {
 	}, nil)
 }
 
-func newCommandHandler(ctx context.Context, cfg *config.Config, log *zap.Logger, rep *reporter.Reporter) (*command.Handler, error) {
-	gl, err := gitlab.New(cfg.GitLabURL, cfg.GitLabToken, log)
+func newCommandHandler(ctx context.Context, cfg *config.Config, log *zap.Logger, rep *reporter.Reporter, m *telemetry.Metrics) (*command.Handler, error) {
+	gl, err := gitlab.New(cfg.GitLabURL, cfg.GitLabToken, log.Named("gitlab"))
 	if err != nil {
 		return nil, err
 	}
@@ -97,16 +99,16 @@ func newCommandHandler(ctx context.Context, cfg *config.Config, log *zap.Logger,
 	var resolver correlate.Resolver
 	switch cfg.PodResolver {
 	case "trace":
-		resolver = correlate.NewTraceResolver(gl, log)
+		resolver = correlate.NewTraceResolver(gl, log.Named("correlate"))
 	case "prometheus":
-		resolver, err = correlate.NewPromResolver(cfg.PrometheusURL, cfg.ScrapeInterval, log)
+		resolver, err = correlate.NewPromResolver(cfg.PrometheusURL, cfg.ScrapeInterval, log.Named("correlate"))
 		if err != nil {
 			return nil, err
 		}
 	default:
 		return nil, fmt.Errorf("unknown pod resolver %q", cfg.PodResolver)
 	}
-	source, err := metrics.NewPromSource(cfg.PrometheusURL, cfg.ScrapeInterval, log)
+	source, err := metrics.NewPromSource(cfg.PrometheusURL, cfg.ScrapeInterval, log.Named("metrics"), m)
 	if err != nil {
 		return nil, err
 	}
@@ -126,6 +128,7 @@ func newCommandHandler(ctx context.Context, cfg *config.Config, log *zap.Logger,
 		SigningKey:  []byte(cfg.CommandsSigningKey),
 		BotUserID:   botID,
 		ChartFormat: format,
-		Log:         log,
+		Metrics:     m,
+		Log:         log.Named("command"),
 	}, nil
 }

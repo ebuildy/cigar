@@ -38,7 +38,7 @@ func newRunCmd() *cobra.Command {
 				return err
 			}
 			log := logger
-			rep, err := newReporter(cfg, log)
+			rep, err := newReporter(cfg, log, nil)
 			if err != nil {
 				return err
 			}

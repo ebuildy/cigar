@@ -11,21 +11,35 @@ import (
 	"go.uber.org/zap"
 )
 
+// QueryObserver records how long each Prometheus query takes. A nil observer
+// disables timing (used by paths that expose no /metrics, e.g. `bot run`).
+type QueryObserver interface {
+	ObserveQuery(d time.Duration)
+}
+
 // NewPromSource returns the Prometheus-backed source. It satisfies both Source
-// (aggregation) and SeriesSource (range queries).
-func NewPromSource(promURL string, scrapeInterval time.Duration, log *zap.Logger) (*PromSource, error) {
+// (aggregation) and SeriesSource (range queries). obs may be nil.
+func NewPromSource(promURL string, scrapeInterval time.Duration, log *zap.Logger, obs QueryObserver) (*PromSource, error) {
 	c, err := api.NewClient(api.Config{Address: promURL})
 	if err != nil {
 		return nil, fmt.Errorf("create prometheus client: %w", err)
 	}
 	log.Debug("prometheus metrics source created", zap.String("url", promURL))
-	return &PromSource{api: promv1.NewAPI(c), scrape: scrapeInterval, log: log}, nil
+	return &PromSource{api: promv1.NewAPI(c), scrape: scrapeInterval, log: log, obs: obs}, nil
 }
 
 type PromSource struct {
 	api    promv1.API
 	scrape time.Duration
 	log    *zap.Logger
+	obs    QueryObserver
+}
+
+// observe reports a query's duration to the observer if one is configured.
+func (s *PromSource) observe(start time.Time) {
+	if s.obs != nil {
+		s.obs.ObserveQuery(time.Since(start))
+	}
 }
 
 func (s *PromSource) PodUsage(ctx context.Context, pod string, start, end time.Time) (*JobUsage, error) {
@@ -101,6 +115,7 @@ func (s *PromSource) PodUsage(ctx context.Context, pod string, start, end time.T
 // scalar runs an instant query expected to yield at most one sample.
 // ok is false when the query matched no series (metric absent ≠ zero).
 func (s *PromSource) scalar(ctx context.Context, query string, ts time.Time) (float64, bool, error) {
+	defer s.observe(time.Now())
 	val, _, err := s.api.Query(ctx, query, ts)
 	if err != nil {
 		return 0, false, fmt.Errorf("prometheus query %q: %w", query, err)
@@ -165,6 +180,7 @@ func (s *PromSource) PodActiveSpan(ctx context.Context, pod string) (time.Time, 
 
 // rangePoints runs a query_range and flattens the single matrix stream.
 func (s *PromSource) rangePoints(ctx context.Context, query string, start, end time.Time, step time.Duration) ([]Point, error) {
+	defer s.observe(time.Now())
 	val, _, err := s.api.QueryRange(ctx, query, promv1.Range{Start: start, End: end, Step: step})
 	if err != nil {
 		return nil, fmt.Errorf("prometheus range query %q: %w", query, err)

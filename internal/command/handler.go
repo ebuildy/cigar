@@ -25,6 +25,11 @@ type Advisor interface {
 	Advise(ctx context.Context, projectID, pipelineID int64, jobFilter string) ([]advice.Advice, error)
 }
 
+// Recorder counts executed commands for the ops metrics. Optional (nil = no-op).
+type Recorder interface {
+	RecordCommand(projectID int64, kind string)
+}
+
 // Handler authorizes and executes command notes.
 type Handler struct {
 	GitLab      gitlab.Client
@@ -34,6 +39,7 @@ type Handler struct {
 	SigningKey  []byte
 	BotUserID   int64
 	ChartFormat chart.Format // PNG (default) or SVG
+	Metrics     Recorder     // nil disables command metrics
 	Log         *zap.Logger
 }
 
@@ -65,6 +71,10 @@ func (h *Handler) Handle(ctx context.Context, ev NoteEvent) error {
 		h.Log.Warn("command note root marker missing/invalid/mismatched",
 			zap.Int64("note_id", ev.NoteID), zap.Bool("marker_ok", ok))
 		return nil
+	}
+
+	if h.Metrics != nil {
+		h.Metrics.RecordCommand(ev.ProjectID, cmd.Kind.String())
 	}
 
 	switch cmd.Kind {
