@@ -133,7 +133,7 @@ mise r helm:test      # helm lint + helm-unittest suites in deploy/chart/cigar/t
 
 CI is GitHub Actions (`.github/workflows/`), running the mise tasks via `jdx/mise-action` so CI and local use the same pinned toolchain:
 
-- `ci.yml` — on push to main and PRs: lint → test (race, incl. e2e) → build.
+- `ci.yml` — on push to main and PRs. Two parallel jobs: `ci` (lint → test with race, incl. e2e → build) and `helm` (`mise r helm:test`: `helm lint` + the helm-unittest suites).
 - `release.yml` — on `v*` tags: `goreleaser release` publishes binaries (linux/darwin × amd64/arm64), archives, checksums and changelog as a GitHub release. Config in `.goreleaser.yaml`; the version is stamped into `main.version` (`bot --version`).
 
 ## Deployment
@@ -143,6 +143,7 @@ Helm chart in `deploy/chart/cigar`: Deployment (2 replicas, PDB), Service (http 
 ## Definition of done for changes
 
 - `mise r lint test` clean, race detector on.
+- Chart changes: `mise r helm:test` clean, with a helm-unittest case covering the new behavior (CI runs it as its own job).
 - New PromQL queries are verified against a real Prometheus snapshot in `testdata/` — never merge queries verified only "by eye".
 - Webhook handler changes require a test proving invalid/missing token → 401 and oversized body → 413.
 - Any change to the comment format updates the golden files and the README screenshot.

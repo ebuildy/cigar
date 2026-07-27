@@ -103,10 +103,11 @@ The definition of done (see [CLAUDE.md](CLAUDE.md) for the full list):
 1. `mise r lint` and `mise r test` are clean — the race detector is always on.
 2. New PromQL queries are verified against a real Prometheus snapshot in `testdata/`, never only "by eye".
 3. Webhook handler changes include tests proving invalid/missing token → `401` and oversized body → `413`.
+3. Helm chart changes keep `mise r helm:test` green, with a helm-unittest case in `deploy/chart/cigar/tests/` covering the new behavior.
 4. Changes to the MR comment format update the golden files and the README screenshot.
 5. Behavior spanning several components is covered in the e2e suite (`internal/e2e`), which runs the real webhook app, worker and API clients against mock GitLab/Prometheus servers.
 
-CI (GitHub Actions, [.github/workflows/ci.yml](.github/workflows/ci.yml)) runs lint → test → build on every push and PR, using the same mise tasks and pinned toolchain as your machine — if it passes locally, it passes in CI.
+CI (GitHub Actions, [.github/workflows/ci.yml](.github/workflows/ci.yml)) runs lint → test → build on every push and PR, plus a parallel `helm` job running `mise r helm:test` (chart lint + helm-unittest), using the same mise tasks and pinned toolchain as your machine — if it passes locally, it passes in CI.
 
 ## Releasing
 

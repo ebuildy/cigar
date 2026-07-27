@@ -27,3 +27,17 @@ jobs:
 
       - name: Build
         run: mise r build
+
+  # Separate job: the chart has no Go dependency, so it gives its own signal and
+  # runs in parallel. `helm` is pinned in mise.toml, and the task pins the
+  # helm-unittest plugin, so CI and local run identical versions.
+  helm:
+    name: helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: jdx/mise-action@v2
+
+      - name: Helm lint + unit tests
+        run: mise r helm:test

@@ -55,12 +55,17 @@ run = "helm template cigar deploy/chart/cigar --set secrets.GITLAB_TOKEN.value=x
 [tasks."helm:test"]
 description = "Run the Helm chart unit tests (deploy/chart/cigar/tests, helm-unittest)"
 # helm-unittest isn't in mise's registry, so install the helm plugin on first
-# run. --verify=false: the repo publishes no provenance for its releases.
+# run. Pinned so CI and local agree and an upstream change can't break the
+# build; --verify=false because the repo publishes no provenance for releases.
 # GITLAB_TOKEN/WEBHOOK_SECRET have no default source — the chart refuses to
 # render a Deployment that would CrashLoopBackOff — so lint needs placeholders.
+env = { HELM_UNITTEST_VERSION = "1.1.2" }
 run = """
-helm plugin list | grep -q '^unittest' \
-  || helm plugin install https://github.com/helm-unittest/helm-unittest --verify=false
+helm plugin list | grep -q "^unittest[[:space:]]\\+$HELM_UNITTEST_VERSION\\b" || {
+  helm plugin uninstall unittest 2>/dev/null || true
+  helm plugin install https://github.com/helm-unittest/helm-unittest \
+    --version "$HELM_UNITTEST_VERSION" --verify=false
+}
 helm lint deploy/chart/cigar \
   --set secrets.GITLAB_TOKEN.value=lint --set secrets.WEBHOOK_SECRET.value=lint
 helm unittest deploy/chart/cigar

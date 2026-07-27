@@ -130,7 +130,7 @@ mise r release:snapshot  # local goreleaser snapshot build (no publish)
 
 ### CI & releases
 
-GitHub Actions runs the same mise tasks as local development (`.github/workflows/ci.yml`: lint → test → build on every push and PR).
+GitHub Actions runs the same mise tasks as local development (`.github/workflows/ci.yml`, on every push and PR): a `ci` job for lint → test → build, and a parallel `helm` job running `mise r helm:test` against the chart.
 
 Releases are handled by [GoReleaser](https://goreleaser.com): push a `v*` tag and `.github/workflows/release.yml` publishes a GitHub release with binaries for linux/darwin (amd64/arm64), archives, checksums and a changelog. The tag version is stamped into the binary (`bot --version`).
 
