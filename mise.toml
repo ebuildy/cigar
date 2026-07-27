@@ -49,7 +49,22 @@ run = "go run ./cmd/bot serve"
 
 [tasks."helm:template"]
 description = "Templatize Helm chart cigar"
-run = "helm template cigar deploy/chart/cigar"
+# Placeholder secrets: every secret the config requires must name a source.
+run = "helm template cigar deploy/chart/cigar --set secrets.GITLAB_TOKEN.value=x --set secrets.WEBHOOK_SECRET.value=x"
+
+[tasks."helm:test"]
+description = "Run the Helm chart unit tests (deploy/chart/cigar/tests, helm-unittest)"
+# helm-unittest isn't in mise's registry, so install the helm plugin on first
+# run. --verify=false: the repo publishes no provenance for its releases.
+# GITLAB_TOKEN/WEBHOOK_SECRET have no default source — the chart refuses to
+# render a Deployment that would CrashLoopBackOff — so lint needs placeholders.
+run = """
+helm plugin list | grep -q '^unittest' \
+  || helm plugin install https://github.com/helm-unittest/helm-unittest --verify=false
+helm lint deploy/chart/cigar \
+  --set secrets.GITLAB_TOKEN.value=lint --set secrets.WEBHOOK_SECRET.value=lint
+helm unittest deploy/chart/cigar
+"""
 
 [tasks."helm:deploy"]
 description = "Install or update the Helm chart cigar"

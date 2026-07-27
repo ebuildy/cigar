@@ -1,0 +1,5 @@
+apiVersion: v2
+name: external-secrets-config
+description: ClusterGenerators for the External Secrets Operator, usable by any ExternalSecret in the dev cluster (e.g. a cigar externalSecrets source referenced by secrets.<ENV_VAR>.externalSecret.ref)
+type: application
+version: 0.1.0

@@ -22,15 +22,17 @@ config:
   # Pod-correlation strategy: "trace" or "prometheus".
   podResolver: "trace"
   webhook:
-    # Webhook auth method: "secret" (X-Gitlab-Token, needs secrets.webhookSecret)
-    # or "signing_token" (webhook-signature HMAC, needs secrets.signingToken).
+    # Webhook auth method: "secret" (X-Gitlab-Token, needs
+    # secrets.WEBHOOK_SECRET) or "signing_token" (webhook-signature HMAC, needs
+    # secrets.WEBHOOK_SIGNING_TOKEN).
     authMethod: "secret"
   report:
     throttleWarnRatio: "0.25"
     longJobDuration: "10m"
     memoryPressureRatio: "0.9"
   commands:
-    # Interactive report commands. Requires secrets.commandsSigningKey when true.
+    # Interactive report commands. Requires secrets.COMMANDS_SIGNING_KEY when
+    # true.
     enabled: false
     chartFormat: "png"
   server:
@@ -39,23 +41,136 @@ config:
   log:
     level: "info"
 
+# ESO generators to create, keyed by the resource name. The name is used as-is
+# (not release-prefixed), so it is exactly what an `externalSecrets` spec below
+# references under `sourceRef.generatorRef.name`. ClusterGenerator is
+# cluster-scoped — pick names that stay unique across releases.
+#
+# Shorthand: the entry is the `passwordSpec` of a Password ClusterGenerator, so
+# one generator can mint several independent values at once via `secretKeys`.
+# For any other generator kind, set `kind` and a raw `spec` instead:
+#   myToken:
+#     kind: ClusterGenerator
+#     spec:
+#       kind: UUID
+#       generator: {uuidSpec: {}}
+externalSecretsGenerator: {}
+  # keys:
+  #   # 32 raw characters, so the whsec_ template below b64encs it into the
+  #   # 32-byte key GitLab requires. Do not set `encoding` as well.
+  #   length: 32
+  #   digits: 8
+  #   # No symbols: these travel through env vars, keep them quoting-safe.
+  #   symbols: 0
+  #   # One independent random value per key.
+  #   secretKeys:
+  #     - WEBHOOK_SECRET
+  #     - WEBHOOK_SIGNING_TOKEN
+  #     - COMMANDS_SIGNING_KEY
+
+# ExternalSecret instances, keyed by a name of your choosing. The value is the
+# raw `spec` of an External Secrets Operator ExternalSecret, rendered verbatim —
+# so anything ESO supports works here (stores, generators, dataFrom, templates,
+# rewrites) without the chart modelling it.
+#
+# The chart names each CR `<release>-<key>`, and ESO defaults the Secret it
+# manages to that same name. So the entry below produces Secret `cigar-vault`,
+# which `secrets.GITLAB_TOKEN.externalSecret: vault` reads from.
+externalSecrets: {}
+  # vault:
+  #   refreshInterval: "1h"
+  #   secretStoreRef:
+  #     name: vault
+  #     kind: ClusterSecretStore
+  #   data:
+  #     - secretKey: GITLAB_TOKEN
+  #       remoteRef:
+  #         key: cigar/gitlab
+  #         property: token
+  #
+  # keys:
+  #   # A generator mints NEW values on every refresh; "0s" fetches once, so
+  #   # anything GitLab also holds a copy of stays stable.
+  #   refreshInterval: "0s"
+  #   # dataFrom pulls every key the generator emits (see its `secretKeys`).
+  #   dataFrom:
+  #     - sourceRef:
+  #         generatorRef:
+  #           apiVersion: generators.external-secrets.io/v1alpha1
+  #           kind: ClusterGenerator
+  #           name: keys
+  #   target:
+  #     template:
+  #       engineVersion: v2
+  #       # Required when only some keys are templated: ESO's default (Replace)
+  #       # keeps ONLY templated keys and drops the rest.
+  #       mergePolicy: Merge
+  #       data:
+  #         # A generator emits a bare random string, but GitLab signing tokens
+  #         # are whsec_<standard base64 of a 32-byte key> — so b64enc the
+  #         # generated value (32 raw chars) and prepend the prefix.
+  #         WEBHOOK_SIGNING_TOKEN: "whsec_{{ .WEBHOOK_SIGNING_TOKEN | b64enc }}"
+
+# apiVersion for the ExternalSecrets above. ESO >= 0.11 serves
+# external-secrets.io/v1; set external-secrets.io/v1beta1 for older operators.
+externalSecretApiVersion: external-secrets.io/v1
+
+# Secrets the bot consumes, keyed by the environment variable name. Each is
+# sourced independently, so the GitLab token can live in a Secret your platform
+# team owns while the HMAC keys come from somewhere else entirely.
+#
+# Set exactly ONE source per secret:
+#   value           raw literal; the chart puts it in a Secret it owns (fine for
+#                   a scratch cluster, it lands in your Helm release — don't
+#                   commit real ones)
+#   existingSecret  name of a Secret you already manage (sealed-secrets, SOPS,
+#                   a script, an ExternalSecret of your own)
+#   externalSecret  name of an `externalSecrets` entry above; reads the Secret
+#                   that ExternalSecret manages
+#
+# Only the secrets the current config actually needs are rendered and injected:
+# GITLAB_TOKEN always, WEBHOOK_SECRET or WEBHOOK_SIGNING_TOKEN depending on
+# config.webhook.authMethod, COMMANDS_SIGNING_KEY when config.commands.enabled.
+# A required secret with no source fails the render.
 secrets:
-  # Name of an existing Secret holding GITLAB_TOKEN plus the key the configured
-  # config.webhook.authMethod needs (WEBHOOK_SECRET for "secret",
-  # WEBHOOK_SIGNING_TOKEN for "signing_token"), plus COMMANDS_SIGNING_KEY when
-  # commands.enabled is true. Recommended (sealed-secrets, external-secrets, ...).
-  existingSecret: ""
-  # Alternatively set the values here and the chart creates the Secret
-  # itself. Avoid committing real values to git.
-  webhookSecret: ""
-  # WEBHOOK_SIGNING_TOKEN: GitLab signing token (whsec_...). Required only when
-  # config.webhook.authMethod is "signing_token". Prefer existingSecret in production.
-  signingToken: ""
-  gitlabToken: ""
-  # COMMANDS_SIGNING_KEY: HMAC key signing the report marker for interactive
-  # commands. Required only when commands.enabled is true; must be a stable
-  # random secret shared by every replica. Prefer existingSecret in production.
-  commandsSigningKey: ""
+  # Project/group access token with `api` scope. Cannot be generated — a random
+  # value authenticates nothing — so back it with a real store or Secret.
+  GITLAB_TOKEN:
+    value: ""
+    existingSecret: ""
+    # Key to read inside the Secret. Defaults to the secret's own name
+    # (GITLAB_TOKEN); set it only when the Secret spells it differently.
+    key: ""
+    externalSecret: ""
+
+  # Legacy shared secret, compared against the X-Gitlab-Token header. Needed
+  # when config.webhook.authMethod is "secret".
+  WEBHOOK_SECRET:
+    value: ""
+    existingSecret: ""
+    key: ""
+    externalSecret: ""
+
+  # GitLab signing token, verifying the webhook-signature HMAC. Needed when
+  # config.webhook.authMethod is "signing_token". Must be whsec_<base64>
+  # encoding a 32-byte key — `echo "whsec_$(openssl rand -base64 32)"` — and
+  # identical to the signing_token on every project hook. The chart checks that
+  # shape for a literal `value`; behind an existingSecret or ExternalSecret it
+  # is on you (see the `keys` example above for generating a valid one).
+  WEBHOOK_SIGNING_TOKEN:
+    value: ""
+    existingSecret: ""
+    key: ""
+    externalSecret: ""
+
+  # HMAC key signing the report marker for interactive commands. Needed when
+  # config.commands.enabled is true. The best generator candidate: it only has
+  # to be stable and shared by every replica, and never leaves the cluster.
+  COMMANDS_SIGNING_KEY:
+    value: ""
+    existingSecret: ""
+    key: ""
+    externalSecret: ""
 
 # Extra environment variables for the bot container.
 extraEnv: []

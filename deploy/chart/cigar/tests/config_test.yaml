@@ -1,0 +1,86 @@
+suite: config
+templates:
+  - configmap.yaml
+tests:
+  - it: renders every config group with the chart defaults
+    asserts:
+      - equal:
+          path: metadata.name
+          value: RELEASE-NAME-cigar
+      - equal:
+          path: data["config.yaml"]
+          value: |
+            gitlab:
+              url: "https://gitlab.com"
+            prometheus:
+              url: "http://prometheus-operated.monitoring.svc:9090"
+              scrape_interval: "30s"
+            pod_resolver: "trace"
+            webhook:
+              auth_method: "secret"
+            report:
+              throttle_warn_ratio: "0.25"
+              long_job_duration: "10m"
+              memory_pressure_ratio: "0.9"
+            commands:
+              enabled: "false"
+              chart_format: "png"
+            server:
+              listen_addr: ":8080"
+              ops_addr: ":8081"
+            log:
+              level: "info"
+
+  - it: propagates value overrides into config.yaml
+    set:
+      config:
+        gitlab:
+          url: http://gitlab.kind.local
+        prometheus:
+          url: http://prom.monitoring.svc:9090
+          scrapeInterval: 60s
+        podResolver: prometheus
+        report:
+          throttleWarnRatio: "0.4"
+        commands:
+          enabled: true
+          chartFormat: markdown
+        log:
+          level: debug
+    asserts:
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: 'url: "http://gitlab\.kind\.local"'
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: 'scrape_interval: "60s"'
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: 'pod_resolver: "prometheus"'
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: 'throttle_warn_ratio: "0\.4"'
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: 'enabled: "true"'
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: 'chart_format: "markdown"'
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: 'level: "debug"'
+
+  - it: carries the signing_token auth method through to the file
+    set:
+      config.webhook.authMethod: signing_token
+    asserts:
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: 'auth_method: "signing_token"'
+
+  - it: rejects an unknown webhook auth method
+    set:
+      config.webhook.authMethod: mtls
+    asserts:
+      - failedTemplate:
+          errorMessage: 'config.webhook.authMethod must be "secret" or "signing_token", got "mtls"'

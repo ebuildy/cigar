@@ -46,7 +46,7 @@ startup on missing/invalid required values.
 | `POD_RESOLVER` | no | `trace` | Pod-correlation strategy: `trace` (parse the job's GitLab trace) or `prometheus` (join `kube_pod_labels{label_job_id}`) |
 | `WEBHOOK_AUTH_METHOD` | no | `secret` | Webhook auth method: `secret` or `signing_token` |
 | `WEBHOOK_SECRET` | with `secret` | — | Legacy shared secret, compared against the `X-Gitlab-Token` header |
-| `WEBHOOK_SIGNING_TOKEN` | with `signing_token` | — | GitLab signing token (`whsec_…`) used to verify the `webhook-signature` HMAC |
+| `WEBHOOK_SIGNING_TOKEN` | with `signing_token` | — | GitLab signing token, `whsec_<base64 of a 32-byte key>`, used to verify the `webhook-signature` HMAC |
 | `REPORT_THROTTLE_WARN_RATIO` | no | `0.25` | Throttled-periods ratio above which a warning is shown |
 | `PROMETHEUS_SCRAPE_INTERVAL` | no | `30s` | Prometheus scrape interval; query windows are padded by one interval |
 | `REPORT_LONG_JOB_DURATION` | no | `10m` | Job duration above which `advise` suggests splitting the job |
@@ -65,7 +65,8 @@ method; a request it does not authenticate is rejected with `401`.
   `WEBHOOK_SECRET`. (An empty configured secret never authenticates.)
 - `signing_token` — verify the `webhook-signature` header: `HMAC-SHA256` over
   `{webhook-id}.{webhook-timestamp}.{body}` keyed by `WEBHOOK_SIGNING_TOKEN`
-  (the `whsec_` prefix is stripped and the remainder base64-decoded). Deliveries
+  (the `whsec_` prefix is stripped and the remainder base64-decoded into the
+  32-byte key). Deliveries
   whose timestamp is more than **5 minutes** from now are rejected (replay
   protection).
 
@@ -77,10 +78,11 @@ tokens in GitLab.
 
 ### Deploy with Helm
 
-The chart lives in `deploy/chart/cigar`. Provide `GITLAB_TOKEN` and the auth
-credential of the configured method via a Kubernetes Secret — either chart-managed
-(`secrets.webhookSecret` / `secrets.signingToken` / `secrets.gitlabToken`) or,
-recommended for production, an externally-managed `secrets.existingSecret`.
+The chart lives in `deploy/chart/cigar`. Every secret is configured under
+`secrets.<ENV_VAR>` and sourced independently: a literal `value`, an
+`existingSecret` you manage (recommended for production), or an
+`externalSecret` naming one of the `externalSecrets` entries — raw ExternalSecret
+specs the chart renders verbatim, so anything ESO supports works.
 
 ```sh
 # Example: signing-token auth, credentials in an existing Secret.
@@ -88,7 +90,8 @@ helm upgrade --install cigar deploy/chart/cigar \
   --set config.gitlab.url=https://gitlab.example.com \
   --set config.prometheus.url=http://prometheus-server.monitoring.svc:80 \
   --set config.webhook.authMethod=signing_token \
-  --set secrets.existingSecret=cigar-secrets
+  --set secrets.GITLAB_TOKEN.existingSecret=cigar-secrets \
+  --set secrets.WEBHOOK_SIGNING_TOKEN.existingSecret=cigar-secrets
 ```
 
 The referenced Secret must carry the key the configured method needs:
@@ -106,10 +109,12 @@ The chart injects only the env var its method needs: `WEBHOOK_SECRET` for
 existing-secret user to also carry `WEBHOOK_SECRET`. Any other value fails the
 `helm template`/`install` with an explicit error.
 
-The chart also ships a Deployment (2 replicas + PDB), Service (`8080` http,
-`8081` ops), Ingress (TLS), NetworkPolicy, and hardened pod security
-(`runAsNonRoot`, read-only rootfs, seccomp `RuntimeDefault`). Validate changes
-with `helm lint deploy/chart/cigar` and `helm template deploy/chart/cigar`.
+The chart also ships a Deployment, Service (`8080` http, `8081` ops), Ingress or
+HTTPRoute, NetworkPolicy, PDB, an optional PodMonitor, and hardened pod security
+(`runAsNonRoot`, read-only rootfs, seccomp `RuntimeDefault`).
+**[`deploy.md`](deploy.md) is the full reference** — every values group, the
+[three ways to supply each secret](deploy.md#secrets) (with `values.yaml` and
+`ClusterGenerator.yaml` examples), exposure, NetworkPolicy and metrics.
 
 Build the image with `mise r docker` (multi-stage, distroless/static, nonroot);
 the published image is `ghcr.io/ebuildy/cigar`.
@@ -127,9 +132,13 @@ mise r dev:cigar:deploy     # build + load + deploy + register webhooks (idempot
 kubectl -n cigar logs -f deploy/cigar
 ```
 
-`deploy-cigar.sh` mints and persists a stable `WEBHOOK_SIGNING_TOKEN` in
-`cigar-secrets`, deploys with `WEBHOOK_AUTH_METHOD=signing_token`, and sets a matching
-`signing_token` on each project hook.
+`deploy-cigar.sh` writes only `GITLAB_TOKEN` into `cigar-secrets`; the dev stack
+has the External Secrets Operator mint `WEBHOOK_SIGNING_TOKEN` and
+`COMMANDS_SIGNING_KEY` from the `cigar-password` `ClusterGenerator`
+(`refreshInterval: "0s"`, so they are created once and never rotate). The script
+then reads the generated signing token back out of the
+`cigar-webhook-signing-token` Secret and sets it as the `signing_token` on each
+project hook, so GitLab and the bot stay in step.
 
 ---
 
@@ -142,9 +151,9 @@ registration is per-project), configure a webhook:
   `https://cigar.example.com/webhook` (in-cluster: `http://cigar.cigar.svc.cluster.local:8080/webhook`).
 - **Trigger** → **Pipeline events** only.
 - **Authentication** → set the credential matching your `WEBHOOK_AUTH_METHOD`:
-  - **Signing token** (recommended): a `whsec_`-prefixed, base64 value equal to
-    the bot's `WEBHOOK_SIGNING_TOKEN`. GitLab **rejects** a non-`whsec_` value
-    (HTTP `422`).
+  - **Signing token** (recommended): `whsec_` followed by standard base64 of a
+    32-byte key, equal to the bot's `WEBHOOK_SIGNING_TOKEN`. GitLab **rejects**
+    a malformed value (HTTP `422`).
   - **Secret token** (legacy): an arbitrary string equal to `WEBHOOK_SECRET`.
 
 Requirements:

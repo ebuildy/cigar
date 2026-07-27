@@ -1,0 +1,39 @@
+# ClusterGenerators (generators.external-secrets.io/v1alpha1) registered
+# cluster-wide, so an ExternalSecret in any namespace can name one under
+# `data[].sourceRef.generatorRef` — which is exactly what the cigar chart emits
+# when a secret's externalSecret.ref names a generator source.
+#
+# Each entry maps 1:1 onto the CRD: `name` is metadata.name, `kind` is
+# spec.kind, and `generator` is spec.generator (whose single key is the
+# <kind>Spec for that kind).
+generators:
+  # Random alphanumeric string, emitted under the output key `password` — the
+  # value you put in `remoteRef.key`.
+  #
+  # length MUST stay 32 with the default `raw` encoding: the cigar chart wraps a
+  # generated WEBHOOK_SIGNING_TOKEN in an ESO template that b64encs the value
+  # and prepends `whsec_`, and GitLab signing tokens decode to a 32-byte key.
+  # 32 raw chars -> 44 base64 chars -> a 32-byte key. Encoding it here instead
+  # would double-encode.
+  - name: cigar-password
+    kind: Password
+    generator:
+      passwordSpec:
+        length: 32
+        digits: 8
+        # No symbols: the value travels through env vars and shell in the dev
+        # scripts, so keep it quoting-safe.
+        symbols: 0
+        noUpper: false
+        allowRepeat: true
+
+  # Deterministic stand-in emitting fixed key/value pairs, for smoke-testing the
+  # ExternalSecret wiring without a real backend: the Secret's contents are
+  # known up front, so you can assert on them. Output keys are whatever
+  # `data` declares below.
+  - name: cigar-fake
+    kind: Fake
+    generator:
+      fakeSpec:
+        data:
+          password: dev-fake-value

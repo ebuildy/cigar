@@ -1,3 +1,4 @@
+{{- include "cigar.validateSecrets" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -51,32 +52,14 @@ spec:
               containerPort: {{ .Values.service.opsPort }}
               protocol: TCP
           env:
-            {{- $authMethod := .Values.config.webhook.authMethod | default "secret" }}
-            {{- if eq $authMethod "secret" }}
-            - name: WEBHOOK_SECRET
+            {{- /* Each secret resolves independently, so they can come from
+                   different Secret objects. */}}
+            {{- range $name := splitList " " (include "cigar.requiredSecretNames" .) }}
+            - name: {{ $name }}
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.secrets.existingSecret | default (include "cigar.fullname" .) }}
-                  key: WEBHOOK_SECRET
-            {{- end }}
-            {{- if eq $authMethod "signing_token" }}
-            - name: WEBHOOK_SIGNING_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.secrets.existingSecret | default (include "cigar.fullname" .) }}
-                  key: WEBHOOK_SIGNING_TOKEN
-            {{- end }}
-            - name: GITLAB_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.secrets.existingSecret | default (include "cigar.fullname" .) }}
-                  key: GITLAB_TOKEN
-            {{- if .Values.config.commands.enabled }}
-            - name: COMMANDS_SIGNING_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.secrets.existingSecret | default (include "cigar.fullname" .) }}
-                  key: COMMANDS_SIGNING_KEY
+                  name: {{ include "cigar.secretRefName" (dict "root" $ "name" $name) }}
+                  key: {{ include "cigar.secretRefKey" (dict "root" $ "name" $name) }}
             {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}

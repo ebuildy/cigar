@@ -21,3 +21,6 @@
 .idea/
 *.tmproj
 .vscode/
+# helm-unittest suites (`mise r helm:test`) — not part of the packaged chart.
+# Root-anchored so templates/tests/ (the `helm test` hook) is still packaged.
+/tests

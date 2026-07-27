@@ -20,6 +20,8 @@ repositories:
     url: https://charts.gitlab.io
   - name: prometheus-community
     url: https://prometheus-community.github.io/helm-charts
+  - name: external-secrets
+    url: https://charts.external-secrets.io
 
 releases:
   # Already running in this cluster (installed manually, not by this
@@ -276,6 +278,71 @@ releases:
                     - name: prometheus-kube-prometheus-prometheus
                       port: 9090
 
+  # External Secrets Operator: installs the external-secrets.io CRDs
+  # (ExternalSecret, ClusterSecretStore, ClusterGenerator, ...) and the
+  # controllers that reconcile them, so the cigar chart's ESO path
+  # (secrets.<ENV_VAR>.externalSecret, deploy/chart/cigar) can be exercised on
+  # this cluster instead of only in `helm template`.
+  #
+  # The generators themselves live in the external-secrets-config release
+  # below, same split as agentgateway / agentgateway-config.
+  - name: external-secrets
+    namespace: external-secrets
+    createNamespace: true
+    chart: external-secrets/external-secrets
+    version: 2.8.0
+    values:
+      - crds:
+          enabled: true
+        # Laptop-sized: one replica per controller.
+        replicaCount: 1
+        resources:
+          requests:
+            cpu: 25m
+            memory: 64Mi
+          limits:
+            memory: 192Mi
+        webhook:
+          replicaCount: 1
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 96Mi
+        certController:
+          replicaCount: 1
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 96Mi
+
+  # ClusterGenerators an ExternalSecret can source values from — see
+  # .dev/charts/external-secrets-config. `cigar-password` (Password, 32 raw
+  # chars, output key `password`) is what a generator source expects:
+  #
+  #   externalSecrets:
+  #     keysGenerator: {kind: ClusterGenerator, name: cigar-password}
+  #   secrets:
+  #     COMMANDS_SIGNING_KEY:
+  #       externalSecret:
+  #         ref: keysGenerator
+  #         remoteRef: {key: password}
+  #
+  # The cigar release below uses it for WEBHOOK_SIGNING_TOKEN and
+  # COMMANDS_SIGNING_KEY (with refreshInterval "0s", so the values are minted
+  # once and never rotate out from under GitLab). GITLAB_TOKEN cannot be
+  # generated — it is a PAT minted by gitlab-rails — so it stays in the Secret
+  # deploy-cigar.sh writes. Real clusters read that one from a
+  # ClusterSecretStore instead — see docs/deploy.md.
+  - name: external-secrets-config
+    namespace: external-secrets
+    chart: ./charts/external-secrets-config
+    needs:
+      - external-secrets/external-secrets
+
   # The bot itself (see ../../deploy/chart/cigar and CLAUDE.md). Unlike
   # the other releases, this isn't self-sufficient: it needs a locally
   # built+kind-loaded image and a Secret (WEBHOOK_SECRET + GITLAB_TOKEN)
@@ -289,6 +356,10 @@ releases:
     needs:
       - gitlab/gitlab
       - monitoring/prometheus
+      # Not used by default (see the external-secrets releases above), but
+      # ordered first so flipping a secret onto an externalSecret ref
+      # finds the CRDs and generators already registered.
+      - external-secrets/external-secrets-config
     values:
       - image:
           repository: cigar
@@ -299,26 +370,73 @@ releases:
             url: http://gitlab.kind.local
           prometheus:
             url: http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090
+            scrapeInterval: 60s
           log:
             level: debug
           podResolver: trace
-          throttleWarnRatio: "0.25"
-          scrapeInterval: 60s
-          # Render `details` charts as inline markdown ASCII (no image upload) in
-          # the dev cluster. Prod default is png (see the chart values).
-          chartFormat: markdown
+          report:
+            throttleWarnRatio: "0.25"
           # Authenticate webhooks with GitLab signing tokens (HMAC-SHA256).
           # deploy-cigar.sh sets a matching signing_token on every project hook.
           webhook:
             authMethod: signing_token
-        # Enable the interactive report commands (reply to the bot's MR note
-        # with "help" / "details [job|pod] <name>"). deploy-cigar.sh mints a
-        # stable COMMANDS_SIGNING_KEY into cigar-secrets and registers the
-        # project webhooks with note_events so replies are delivered.
-        commands:
-          enabled: true
+          # Enable the interactive report commands (reply to the bot's MR note
+          # with "help" / "details [job|pod] <name>"). deploy-cigar.sh mints a
+          # stable COMMANDS_SIGNING_KEY into cigar-secrets and registers the
+          # project webhooks with note_events so replies are delivered.
+          commands:
+            enabled: true
+            # Render `details` charts as inline markdown ASCII (no image upload)
+            # in the dev cluster. Prod default is png (see the chart values).
+            chartFormat: markdown
+        # The two HMAC keys are minted in-cluster: a Password ClusterGenerator
+        # emits one independent value per secretKeys entry, and a single
+        # ExternalSecret pulls them all with dataFrom. Only the GitLab PAT still
+        # comes from the Secret deploy-cigar.sh writes, since gitlab-rails is
+        # the only thing that can issue one.
+        externalSecretsGenerator:
+          cigar-keys:
+            # 32 raw chars: the whsec_ template below b64encs it into the
+            # 32-byte key GitLab requires.
+            length: 32
+            digits: 8
+            # No symbols — these travel through env vars and shell.
+            symbols: 0
+            secretKeys:
+              - WEBHOOK_SIGNING_TOKEN
+              - COMMANDS_SIGNING_KEY
+        externalSecrets:
+          keys:
+            # A generator mints NEW values on every refresh, and
+            # WEBHOOK_SIGNING_TOKEN has to stay byte-identical to the
+            # signing_token deploy-cigar.sh stored on each project hook. "0s"
+            # fetches once; ESO persists the result in a GeneratorState, so
+            # redeploys reuse it instead of rotating.
+            refreshInterval: "0s"
+            dataFrom:
+              - sourceRef:
+                  generatorRef:
+                    apiVersion: generators.external-secrets.io/v1alpha1
+                    kind: ClusterGenerator
+                    name: cigar-keys
+            target:
+              template:
+                engineVersion: v2
+                # Replace (the default) would keep ONLY the templated key and
+                # drop COMMANDS_SIGNING_KEY from the Secret.
+                mergePolicy: Merge
+                data:
+                  WEBHOOK_SIGNING_TOKEN: "whsec_{{ `{{ .WEBHOOK_SIGNING_TOKEN | b64enc }}` }}"
         secrets:
-          existingSecret: cigar-secrets
+          GITLAB_TOKEN:
+            existingSecret: cigar-secrets
+          # Both land in the Secret the `keys` ExternalSecret manages
+          # (cigar-keys). deploy-cigar.sh reads the signing token back out of it
+          # and registers that on every project hook.
+          WEBHOOK_SIGNING_TOKEN:
+            externalSecret: keys
+          COMMANDS_SIGNING_KEY:
+            externalSecret: keys
         # Same reason as gitlab-runner's host_aliases above: gitlab.kind.local
         # doesn't resolve inside pods without this on this cluster.
         hostAliases:

@@ -53,55 +53,49 @@ curl -sf -H "PRIVATE-TOKEN: $GITLAB_TOKEN" \
   --data-urlencode "allow_local_requests_from_web_hooks_and_services=true" \
   -o /dev/null
 
-echo "==> Ensuring a stable WEBHOOK_SECRET"
+echo "==> Writing cigar-secrets (GITLAB_TOKEN only)"
 kubectl --context "$KUBE_CONTEXT" create namespace cigar --dry-run=client -o yaml | kubectl --context "$KUBE_CONTEXT" apply -f - >/dev/null
-# Reuse the existing WEBHOOK_SECRET so it stays in sync with the token already
-# stored on every project's webhook. Minting a fresh secret each run (while
-# leaving already-registered hooks untouched) is what caused 401s on redeploy.
-WEBHOOK_SECRET=$(kubectl --context "$KUBE_CONTEXT" -n cigar get secret cigar-secrets \
-  -o jsonpath='{.data.WEBHOOK_SECRET}' 2>/dev/null | base64 -d || true)
-
-echo "    existing WEBHOOK_SECRET: $WEBHOOK_SECRET"
-
-echo "==> Ensuring a stable WEBHOOK_SIGNING_TOKEN (GitLab signing-token auth)"
-# The bot runs with WEBHOOK_AUTH_METHOD=signing_token (see helmfile), so it verifies the
-# webhook-signature HMAC against this token. It must be the whsec_-prefixed,
-# base64 form GitLab requires (a plain string is rejected with 422), and must
-# stay stable so the signing_token already stored on every project hook keeps
-# matching — same rationale as WEBHOOK_SECRET above.
-WEBHOOK_SIGNING_TOKEN=$(kubectl --context "$KUBE_CONTEXT" -n cigar get secret cigar-secrets \
-  -o jsonpath='{.data.WEBHOOK_SIGNING_TOKEN}' 2>/dev/null | base64 -d || true)
-
-echo "    existing WEBHOOK_SIGNING_TOKEN: $WEBHOOK_SIGNING_TOKEN"
-
-echo "==> Ensuring a stable COMMANDS_SIGNING_KEY (interactive-command marker HMAC)"
-# The bot signs its report-note marker with this key and verifies command
-# replies against it. It must stay stable so replies to reports posted on an
-# earlier deploy keep verifying — same rationale as WEBHOOK_SECRET above.
-COMMANDS_SIGNING_KEY=$(kubectl --context "$KUBE_CONTEXT" -n cigar get secret cigar-secrets \
-  -o jsonpath='{.data.COMMANDS_SIGNING_KEY}' 2>/dev/null | base64 -d || true)
-if [[ -z "$COMMANDS_SIGNING_KEY" ]]; then
-  COMMANDS_SIGNING_KEY=$(openssl rand -hex 32)
-  echo "    minted a new COMMANDS_SIGNING_KEY"
-else
-  echo "    reusing existing COMMANDS_SIGNING_KEY"
-fi
-
-echo "==> Writing cigar-secrets"
+# Only the PAT lives here: gitlab-rails is the only thing that can issue one, so
+# it cannot be generated. WEBHOOK_SIGNING_TOKEN and COMMANDS_SIGNING_KEY are
+# minted in-cluster by the cigar-password ClusterGenerator through ESO — see the
+# cigar release in the helmfile — and read back below.
 kubectl --context "$KUBE_CONTEXT" -n cigar create secret generic cigar-secrets \
-  --from-literal=WEBHOOK_SECRET="$WEBHOOK_SECRET" \
-  --from-literal=WEBHOOK_SIGNING_TOKEN="$WEBHOOK_SIGNING_TOKEN" \
   --from-literal=GITLAB_TOKEN="$GITLAB_TOKEN" \
-  --from-literal=COMMANDS_SIGNING_KEY="$COMMANDS_SIGNING_KEY" \
   --dry-run=client -o yaml | kubectl --context "$KUBE_CONTEXT" apply -f - >/dev/null
 
 echo "==> Deploying cigar via helmfile"
 helmfile -f "$HELMFILE" apply -l name=cigar
 
+echo "==> Reading the ESO-generated WEBHOOK_SIGNING_TOKEN"
+# The chart renders one ExternalSecret per externalSecrets entry; ESO defaults
+# the Secret it manages to the same name, so the "keys" entry lands in
+# cigar-keys. ESO fills it moments after the release is applied, so poll
+# briefly rather than assume it is already there.
+SIGNING_SECRET="cigar-keys"
+WEBHOOK_SIGNING_TOKEN=""
+for _ in $(seq 1 30); do
+  WEBHOOK_SIGNING_TOKEN=$(kubectl --context "$KUBE_CONTEXT" -n cigar get secret "$SIGNING_SECRET" \
+    -o jsonpath='{.data.WEBHOOK_SIGNING_TOKEN}' 2>/dev/null | base64 -d || true)
+  [[ -n "$WEBHOOK_SIGNING_TOKEN" ]] && break
+  sleep 2
+done
+if [[ -z "$WEBHOOK_SIGNING_TOKEN" ]]; then
+  echo "error: ESO did not materialise $SIGNING_SECRET; check the ExternalSecret:" >&2
+  echo "  kubectl --context $KUBE_CONTEXT -n cigar describe externalsecret $SIGNING_SECRET" >&2
+  exit 1
+fi
+# The chart's ESO template should have produced whsec_<base64 of 32 bytes>.
+if [[ ! "$WEBHOOK_SIGNING_TOKEN" =~ ^whsec_[A-Za-z0-9+/]{43}=$ ]]; then
+  echo "error: generated WEBHOOK_SIGNING_TOKEN is not whsec_<base64 of a 32-byte key>." >&2
+  echo "       Check that the cigar-password generator emits 32 raw characters." >&2
+  exit 1
+fi
+echo "    read a ${#WEBHOOK_SIGNING_TOKEN}-char token from $SIGNING_SECRET"
+
 # helmfile won't roll the pod when the image tag is unchanged (cigar:dev) and
 # only the externally-managed Secret changed, so a same-tag rebuild or a
-# rotated GITLAB_TOKEN/WEBHOOK_SECRET would otherwise keep running on the old
-# pod. Force a restart so the freshly-built image and current secrets take hold.
+# rotated GITLAB_TOKEN would otherwise keep running on the old pod. Force a
+# restart so the freshly-built image and current secrets take hold.
 echo "==> Restarting cigar to pick up the new image and secrets"
 kubectl --context "$KUBE_CONTEXT" -n cigar rollout restart deploy/cigar
 kubectl --context "$KUBE_CONTEXT" -n cigar rollout status deploy/cigar --timeout=180s

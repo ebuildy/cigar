@@ -1,0 +1,14 @@
+{{- range .Values.generators }}
+---
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: ClusterGenerator
+metadata:
+  name: {{ .name }}
+  labels:
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+spec:
+  kind: {{ .kind }}
+  generator:
+    {{- toYaml .generator | nindent 4 }}
+{{- end }}

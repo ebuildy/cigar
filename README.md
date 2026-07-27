@@ -109,7 +109,7 @@ leaving its secret token in place (GitLab then sends both credentials), flip the
 bot to `WEBHOOK_AUTH_METHOD=signing_token` with a matching
 `WEBHOOK_SIGNING_TOKEN`, then clear the secret tokens in GitLab.
 
-See [`docs/usage.md`](docs/usage.md) for the full deployment, GitLab-configuration, testing, and interactive-commands guide.
+See [`docs/usage.md`](docs/usage.md) for the GitLab-configuration, testing, and interactive-commands guide, and [`docs/deploy.md`](docs/deploy.md) for the Helm chart reference.
 
 ## Development
 
@@ -184,14 +184,26 @@ Helm chart in `deploy/chart/cigar`: Deployment (2 replicas, PDB), Service, Ingre
 ```sh
 helm install cigar deploy/chart/cigar \
   --set config.prometheus.url=http://prometheus-operated.monitoring.svc:9090 \
-  --set secrets.existingSecret=cigar   # Secret with GITLAB_TOKEN + the key your auth method needs
+  --set secrets.GITLAB_TOKEN.existingSecret=cigar \
+  --set secrets.WEBHOOK_SECRET.existingSecret=cigar
 ```
 
 The chart renders `config.*` values into a ConfigMap mounted at
-`/etc/cigar/config.yaml`; secrets come from an existing Secret (recommended) or
-`secrets.webhookSecret`/`secrets.signingToken`/`secrets.gitlabToken`. Enable
-signing-token auth via `config.webhook.authMethod=signing_token` (the chart then
+`/etc/cigar/config.yaml`; secrets come from an existing Secret (recommended),
+an `ExternalSecret` the chart renders for the External Secrets Operator
+(`secrets.<ENV_VAR>.externalSecret` naming an `externalSecrets` entry — raw ESO
+specs rendered verbatim, plus `externalSecretsGenerator` for generators), or a
+literal
+`secrets.<ENV_VAR>.value` — each sourced
+independently, so the GitLab token can live in a Secret your platform team owns
+while the rest come from elsewhere. Enable signing-token auth via `config.webhook.authMethod=signing_token` (the chart then
 injects `WEBHOOK_SIGNING_TOKEN` instead of `WEBHOOK_SECRET`). The NetworkPolicy defaults allow egress to any host on 443 (gitlab.com has no stable CIDR) and to an in-cluster Prometheus in the `monitoring` namespace — tighten `networkPolicy.*` to your environment.
+
+See [`docs/deploy.md`](docs/deploy.md) for the full chart reference: every values
+group, the three ways to supply secrets (chart-managed, existing Secret,
+[External Secrets Operator](docs/deploy.md#3-external-secrets-operator) with
+`values.yaml` and `ClusterGenerator.yaml` examples), exposure, NetworkPolicy and
+metrics.
 
 ## Status
 
