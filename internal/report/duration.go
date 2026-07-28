@@ -10,6 +10,11 @@ import (
 // is noise, so its delta is not rendered even if the data reaches us.
 const minBaselineSamples = 3
 
+// fullBaselineSamples is the sample count at or above which the baseline is
+// considered solid enough to need no footnote. It matches the default
+// report.compare.history_pipelines.
+const fullBaselineSamples = 6
+
 // durationCell renders a duration, followed by a delta against baseline when the
 // comparison is trustworthy (enough samples) and material (beyond warnRatio).
 // A zero current duration means the job never ran — never rendered as 0s.

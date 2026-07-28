@@ -27,13 +27,18 @@ func TestRenderGolden(t *testing.T) {
 	// test 10:01:42–10:04:12 (overlapping, so the span is 4m 12s, not their sum).
 	base := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
 	d := Data{
-		PipelineID:        12345,
-		Status:            "success",
-		ThrottleWarnRatio: 0.25,
+		PipelineID:               12345,
+		Status:                   "success",
+		ThrottleWarnRatio:        0.25,
+		DurationDeltaRatio:       0.05,
+		BaselinePipelineDuration: 3 * time.Minute,
+		BaselinePipelineSamples:  6,
 		Jobs: []JobReport{
 			{Stage: "build", Name: "compile",
-				StartedAt:  base,
-				FinishedAt: base.Add(2*time.Minute + 30*time.Second),
+				StartedAt:        base,
+				FinishedAt:       base.Add(2*time.Minute + 30*time.Second),
+				BaselineDuration: 4 * time.Minute,
+				BaselineSamples:  6,
 				Usage: &metrics.JobUsage{
 					CPUSeconds:         42.5,
 					PeakMemoryBytes:    412 * 1024 * 1024,
@@ -48,8 +53,10 @@ func TestRenderGolden(t *testing.T) {
 					MemoryLimitBytes:   512 * 1024 * 1024,
 				}},
 			{Stage: "test", Name: "unit",
-				StartedAt:  base.Add(102 * time.Second),
-				FinishedAt: base.Add(4*time.Minute + 12*time.Second),
+				StartedAt:        base.Add(102 * time.Second),
+				FinishedAt:       base.Add(4*time.Minute + 12*time.Second),
+				BaselineDuration: 148 * time.Second,
+				BaselineSamples:  6,
 				Usage: &metrics.JobUsage{
 					CPUSeconds:         18,
 					PeakMemoryBytes:    150 * 1024 * 1024,
@@ -422,5 +429,88 @@ func TestDurationCellZeroRatioShowsEveryChange(t *testing.T) {
 	got := durationCell(4*time.Minute+1*time.Second, 4*time.Minute, 6, 0)
 	if !strings.Contains(got, "🔺") {
 		t.Errorf("durationCell = %q, want a slower marker", got)
+	}
+}
+
+func TestRenderDurationComparison(t *testing.T) {
+	base := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
+	// Wall clock 6m20s against a 4m12s median: +2m08s (+51%).
+	d := Data{
+		PipelineID:               99,
+		Status:                   "success",
+		ThrottleWarnRatio:        0.25,
+		DurationDeltaRatio:       0.05,
+		BaselinePipelineDuration: 4*time.Minute + 12*time.Second,
+		BaselinePipelineSamples:  6,
+		Jobs: []JobReport{
+			{Stage: "build", Name: "compile",
+				StartedAt:        base,
+				FinishedAt:       base.Add(6*time.Minute + 20*time.Second),
+				BaselineDuration: 5 * time.Minute,
+				BaselineSamples:  6,
+				Usage:            &metrics.JobUsage{CPUSeconds: 1}},
+		},
+	}
+	got := mustRender(t, d)
+
+	if !strings.Contains(got, "| Pipeline duration | 6m 20s 🔺 +2m 08s (+51%) |") {
+		t.Errorf("summary is missing the pipeline delta:\n%s", got)
+	}
+	if !strings.Contains(got, "| Duration |") {
+		t.Errorf("details table is missing the Duration column:\n%s", got)
+	}
+	// 6m20s vs a 5m median = +1m20s (+27%).
+	if !strings.Contains(got, "6m 20s 🔺 +1m 20s (+27%)") {
+		t.Errorf("job row is missing its delta:\n%s", got)
+	}
+	// A 6-sample baseline at the default size is not thin: no footnote.
+	if strings.Contains(got, "Duration deltas vs") {
+		t.Errorf("a full baseline must not print the thin-baseline footnote:\n%s", got)
+	}
+}
+
+func TestRenderThinBaselineFootnote(t *testing.T) {
+	base := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
+	d := Data{
+		PipelineID:               99,
+		Status:                   "success",
+		DurationDeltaRatio:       0.05,
+		BaselinePipelineDuration: 2 * time.Minute,
+		BaselinePipelineSamples:  4,
+		Jobs: []JobReport{
+			{Stage: "build", Name: "compile",
+				StartedAt:  base,
+				FinishedAt: base.Add(4 * time.Minute),
+				Usage:      &metrics.JobUsage{CPUSeconds: 1}},
+		},
+	}
+	got := mustRender(t, d)
+	want := "_Duration deltas vs the median of 4 recent successful pipelines on other refs._"
+	if !strings.Contains(got, want) {
+		t.Errorf("missing thin-baseline footnote %q:\n%s", want, got)
+	}
+}
+
+func TestRenderWithoutBaselineHasDurationsButNoDeltas(t *testing.T) {
+	base := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
+	d := Data{
+		PipelineID:         99,
+		Status:             "success",
+		DurationDeltaRatio: 0.05,
+		Jobs: []JobReport{
+			{Stage: "build", Name: "compile",
+				StartedAt:  base,
+				FinishedAt: base.Add(90 * time.Second),
+				Usage:      &metrics.JobUsage{CPUSeconds: 1}},
+		},
+	}
+	got := mustRender(t, d)
+	if !strings.Contains(got, "1m 30s") {
+		t.Errorf("job duration is missing:\n%s", got)
+	}
+	for _, marker := range []string{"🔺", "🔻", "Duration deltas vs"} {
+		if strings.Contains(got, marker) {
+			t.Errorf("unexpected %q with no baseline:\n%s", marker, got)
+		}
 	}
 }

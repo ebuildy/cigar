@@ -1161,7 +1161,7 @@ git add internal/report/duration.go internal/report/report_test.go
 git commit -m "feat(report): format duration deltas against a baseline"
 ```
 
-- [ ] **Step 6: Write the failing rendering test**
+- [x] **Step 6: Write the failing rendering test**
 
 Append to `internal/report/report_test.go`:
 
@@ -1250,12 +1250,12 @@ func TestRenderWithoutBaselineHasDurationsButNoDeltas(t *testing.T) {
 }
 ```
 
-- [ ] **Step 7: Run the tests to verify they fail**
+- [x] **Step 7: Run the tests to verify they fail**
 
 Run: `go test -race ./internal/report/ -run TestRender -v`
 Expected: FAIL — unknown fields `DurationDeltaRatio`, `BaselinePipelineDuration`, `BaselinePipelineSamples`, `BaselineDuration`, `BaselineSamples`.
 
-- [ ] **Step 8: Add the Data/JobReport fields**
+- [x] **Step 8: Add the Data/JobReport fields**
 
 In `internal/report/report.go`, extend `JobReport` (after `FinishedAt`):
 
@@ -1279,7 +1279,7 @@ and `Data` (after `RanJobs`):
 	DurationDeltaRatio       float64
 ```
 
-- [ ] **Step 9: Add a job-duration accessor**
+- [x] **Step 9: Add a job-duration accessor**
 
 Add to `internal/report/report.go`, next to `JobReport`:
 
@@ -1293,7 +1293,7 @@ func (j JobReport) duration() time.Duration {
 }
 ```
 
-- [ ] **Step 10: Render the summary delta, the column and the footnote**
+- [x] **Step 10: Render the summary delta, the column and the footnote**
 
 In `Render`, replace the pipeline-duration line:
 
@@ -1367,12 +1367,12 @@ Add to `internal/report/duration.go`:
 const fullBaselineSamples = 6
 ```
 
-- [ ] **Step 11: Run the rendering tests**
+- [x] **Step 11: Run the rendering tests**
 
 Run: `go test -race ./internal/report/ -run TestRender -v`
 Expected: `TestRenderDurationComparison`, `TestRenderThinBaselineFootnote`, `TestRenderWithoutBaselineHasDurationsButNoDeltas` PASS; `TestRenderGolden` FAILS because the golden file predates the column.
 
-- [ ] **Step 12: Give the golden fixture a baseline, then regenerate**
+- [x] **Step 12: Give the golden fixture a baseline, then regenerate**
 
 In `TestRenderGolden`'s `Data` literal add, after `ThrottleWarnRatio: 0.25,`:
 
@@ -1405,12 +1405,12 @@ git diff internal/report/testdata/report.md
 
 Expected in the diff: `| Pipeline duration | 4m 12s 🔺 +1m 12s (+40%) |`; a `Duration` column as the second column of the details table; `compile` showing `2m 30s 🔻 −1m 30s (−38%)`; `unit` showing `2m 30s` with **no** delta (150s vs a 148s median is +1.4%); `deploy : staging` showing `—`. No footnote (6 samples is not thin).
 
-- [ ] **Step 13: Run the full package suite**
+- [x] **Step 13: Run the full package suite**
 
 Run: `go test -race ./internal/report/ -v`
 Expected: PASS, all tests.
 
-- [ ] **Step 14: Commit**
+- [x] **Step 14: Commit**
 
 ```bash
 git add internal/report
