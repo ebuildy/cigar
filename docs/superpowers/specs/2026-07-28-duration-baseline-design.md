@@ -14,9 +14,9 @@ precision and API-call efficiency for a small amount of code.
 
 ## Baseline definition
 
-The baseline is the **median** duration of the **10 most recent successful
+The baseline is the **median** duration of the **N most recent successful
 pipelines of the project, across all refs, excluding the refs of the pipeline
-being reported**.
+being reported** (N = `report.compare.history_pipelines`, default 6).
 
 Excluding the reporting refs is the point of the feature: comparing a branch
 against its own earlier pipelines measures iteration noise, not whether the
@@ -79,7 +79,7 @@ type Source interface {
 // Fetcher implements Source against the GitLab API, with a TTL cache.
 type Fetcher struct {
     GitLab    gitlab.Client
-    Pipelines int           // baseline size, 0 disables the feature
+    Pipelines int           // baseline size (>= minSamples, validated at load)
     TTL       time.Duration // cache entry lifetime, 0 disables caching
     Log       *zap.Logger   // named "history"
     // now is injectable for tests; defaults to time.Now.
@@ -87,8 +87,10 @@ type Fetcher struct {
 }
 ```
 
-`Pipelines == 0` returns an empty `Baseline` immediately, making zero API calls
-— the feature's off switch.
+The off switch is `report.compare.enabled`, handled at wiring time: when it is
+false, `serve` and `bot run` leave `Reporter.History` **nil** and `Build` skips
+the lookup entirely — no `Fetcher`, no API calls, no cache. `Fetcher` itself
+therefore never has to represent a disabled state.
 
 Sampling rules:
 
@@ -120,7 +122,7 @@ Nothing raw is cached.
   project-branch, and sequential is gentler on GitLab rate limits.
 
 Consequence, accepted: a different MR on the same project pays its own refill
-(~11 API calls per project-branch per hour) rather than sharing a per-pipeline
+(~7 API calls per project-branch per hour at the default 6) rather than sharing a per-pipeline
 memo. That duplicate work buys markedly less code.
 
 ### `internal/gitlab`
@@ -217,22 +219,42 @@ _Duration deltas vs the median of 6 recent successful pipelines on other refs._
 
 ## Configuration
 
-Three keys added to the `settings` table in `internal/config` (the single source
-of truth for the yaml/env/flag triple):
+The feature owns one grouped block of `config.yaml`:
 
-| Key | Env | Default | Meaning |
+```yaml
+report:
+  compare:
+    enabled: true
+    duration_delta_ratio: 0.05
+    history_pipelines: 6
+    cache_ttl: 1h
+```
+
+Four keys added to the `settings` table in `internal/config` (the single source
+of truth for the yaml/env/flag triple — `envName`/`flagName` are plain string
+transforms, so the extra nesting level needs no machinery change):
+
+| Key | Env | Flag | Default |
 |---|---|---|---|
-| `report.duration_delta_ratio` | `REPORT_DURATION_DELTA_RATIO` | `0.05` | Relative duration change above which a delta is shown |
-| `history.pipelines` | `HISTORY_PIPELINES` | `10` | Baseline size; `0` disables the feature and all its API calls |
-| `history.cache_ttl` | `HISTORY_CACHE_TTL` | `1h` | Baseline cache lifetime; `0` disables caching |
+| `report.compare.enabled` | `REPORT_COMPARE_ENABLED` | `--report-compare-enabled` | `true` |
+| `report.compare.duration_delta_ratio` | `REPORT_COMPARE_DURATION_DELTA_RATIO` | `--report-compare-duration-delta-ratio` | `0.05` |
+| `report.compare.history_pipelines` | `REPORT_COMPARE_HISTORY_PIPELINES` | `--report-compare-history-pipelines` | `6` |
+| `report.compare.cache_ttl` | `REPORT_COMPARE_CACHE_TTL` | `--report-compare-cache-ttl` | `1h` |
 
-`Config` gains `DurationDeltaRatio float64`, `HistoryPipelines int`,
-`HistoryCacheTTL time.Duration`. `duration_delta_ratio` parses through the
-existing `parseRatio`; `cache_ttl` through `parseDuration`.
+`Config` gains `CompareEnabled bool`, `CompareDurationDeltaRatio float64`,
+`CompareHistoryPipelines int`, `CompareCacheTTL time.Duration`.
+`duration_delta_ratio` parses through the existing `parseRatio`, `cache_ttl`
+through `parseDuration`.
 
-The Helm chart mirrors them: `config.report.durationDeltaRatio`,
-`config.history.pipelines`, `config.history.cacheTtl` in `values.yaml`, rendered
-into `config.yaml` by `templates/configmap.yaml` with their snake_case keys.
+Validation, only when `enabled` is true: `history_pipelines` must be **≥ 3**
+(`minSamples`) — a smaller baseline could never produce a comparison, so it
+fails at load rather than silently rendering nothing. `cache_ttl` may be `0`
+(no caching). With the default 6, the scan width is 18.
+
+The Helm chart mirrors the block as `config.report.compare.enabled`,
+`.durationDeltaRatio`, `.historyPipelines`, `.cacheTtl` in `values.yaml`,
+rendered into `config.yaml` by `templates/configmap.yaml` under
+`report: compare:` with their snake_case keys.
 
 ## Testing
 
@@ -241,8 +263,7 @@ into `config.yaml` by `templates/configmap.yaml` with their snake_case keys.
   forms; median over odd and even sample counts; fewer than 3 samples yields no
   `Stat`; a retried job name appearing twice in one pipeline takes the
   last-finishing occurrence; a pipeline with no run window is skipped; cache
-  hit, miss and expiry via an injected clock; cap eviction; `Pipelines == 0`
-  makes no API call.
+  hit, miss and expiry via an injected clock; cap eviction.
 - **`internal/report`** — golden files. `testdata/report.md` is regenerated with
   the `Duration` column (required by the definition of done), plus new goldens
   for a thin baseline (footnote present), a within-threshold pipeline (no delta
@@ -254,10 +275,14 @@ into `config.yaml` by `templates/configmap.yaml` with their snake_case keys.
   `GET /projects/:id/pipelines?status=success` and job lists for the baseline
   pipeline IDs. Asserts the upserted note carries a duration delta, and that a
   same-ref pipeline offered by the mock never influences it.
-- **`internal/config`** — the three new keys added to the settings-table test,
-  with parse/validation cases.
-- **Chart** — a helm-unittest case covering the new `config.history.*` and
-  `config.report.durationDeltaRatio` rendering.
+- **`internal/config`** — the four new keys added to the settings-table test,
+  with parse cases and the `history_pipelines < 3` load failure (and proof that
+  the same value is accepted when `enabled` is false).
+- **`internal/reporter` / wiring** — `report.compare.enabled: false` leaves
+  `Reporter.History` nil and the report renders with durations but no deltas and
+  no pipeline-list API call.
+- **Chart** — a helm-unittest case covering the `config.report.compare.*`
+  block's rendering into `config.yaml`.
 - **Docs** — `docs/deploy.md` (chart reference) and `docs/usage.md` document the
   new keys; the README report screenshot is refreshed for the new column.
 
