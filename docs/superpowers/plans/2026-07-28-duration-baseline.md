@@ -2177,7 +2177,7 @@ git commit -m "feat(helm): expose the report.compare settings"
 - Modify: `docs/deploy.md`
 - Modify: `README.md`
 
-- [ ] **Step 1: Document the env vars**
+- [x] **Step 1: Document the env vars**
 
 In `docs/usage.md`'s environment table, after the `REPORT_MEMORY_PRESSURE_RATIO` row:
 
@@ -2188,7 +2188,7 @@ In `docs/usage.md`'s environment table, after the `REPORT_MEMORY_PRESSURE_RATIO`
 | `REPORT_COMPARE_CACHE_TTL` | no | `1h` | How long a computed baseline is cached per project+branch; `0` disables caching |
 ```
 
-- [ ] **Step 2: Explain the comparison**
+- [x] **Step 2: Explain the comparison**
 
 Add a short subsection to `docs/usage.md` near the report-content description:
 
@@ -2213,7 +2213,7 @@ pipeline, once an hour. Set `REPORT_COMPARE_ENABLED=false` to switch the feature
 — and all of its API calls — off.
 ```
 
-- [ ] **Step 3: Update the chart reference**
+- [x] **Step 3: Update the chart reference**
 
 In `docs/deploy.md`'s values example, inside `report:` after `memoryPressureRatio`:
 
@@ -2225,7 +2225,7 @@ In `docs/deploy.md`'s values example, inside `report:` after `memoryPressureRati
       cacheTtl: "1h"
 ```
 
-- [ ] **Step 4: Refresh the README report sample**
+- [x] **Step 4: Refresh the README report sample**
 
 The definition of done requires the README's report sample to match the new format. Regenerate it from the golden file:
 
@@ -2235,12 +2235,12 @@ sed -n '/### Details/,$p' internal/report/testdata/report.md
 
 Update the README's sample report block so its details table shows the `Duration` column and its summary row shows the pipeline delta. If the README embeds a screenshot image rather than markdown, note in the PR description that the screenshot needs regenerating and update the surrounding text to mention the duration comparison.
 
-- [ ] **Step 5: Verify the docs render and links hold**
+- [x] **Step 5: Verify the docs render and links hold**
 
 Run: `grep -rn "REPORT_COMPARE" docs/ README.md`
 Expected: the four variables appear in `docs/usage.md`, and `docs/usage.md`'s new subsection references them.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add docs README.md
