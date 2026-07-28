@@ -17,10 +17,24 @@ type Job struct {
 	FinishedAt time.Time
 }
 
+// Pipeline is a past pipeline of the project, used to build duration baselines.
+type Pipeline struct {
+	ID  int64
+	Ref string
+}
+
 // Client is the boundary interface consumed by the worker; tests stub it.
 type Client interface {
 	// PipelineJobs returns all jobs of the given pipeline.
 	PipelineJobs(ctx context.Context, projectID, pipelineID int64) ([]Job, error)
+
+	// RecentSuccessfulPipelines returns up to limit of the project's most recent
+	// successful pipelines, newest first, across all refs.
+	RecentSuccessfulPipelines(ctx context.Context, projectID int64, limit int) ([]Pipeline, error)
+
+	// PipelineRef returns the ref a pipeline ran on. Used by `bot run`, which
+	// has no webhook payload to read it from.
+	PipelineRef(ctx context.Context, projectID, pipelineID int64) (string, error)
 
 	// MergeRequestForBranch resolves the open MR whose source branch is the
 	// given ref. Used when a Pipeline webhook carries no merge_request yet

@@ -56,6 +56,10 @@ func (f *fakeGitLab) UploadFile(context.Context, int64, string, []byte) (string,
 func (f *fakeGitLab) CreateDiscussionReply(context.Context, int64, int64, string, string) error {
 	return nil
 }
+func (f *fakeGitLab) RecentSuccessfulPipelines(context.Context, int64, int) ([]gitlab.Pipeline, error) {
+	return nil, nil
+}
+func (f *fakeGitLab) PipelineRef(context.Context, int64, int64) (string, error) { return "", nil }
 
 type fakeResolver struct {
 	pods map[int64]string // job ID -> pod name

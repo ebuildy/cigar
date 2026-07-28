@@ -55,6 +55,47 @@ func (a *apiClient) PipelineJobs(ctx context.Context, projectID, pipelineID int6
 	return jobs, nil
 }
 
+// RecentSuccessfulPipelines lists the project's successful pipelines newest
+// first (GitLab's default id-descending order), paginating only far enough to
+// reach limit.
+func (a *apiClient) RecentSuccessfulPipelines(ctx context.Context, projectID int64, limit int) ([]Pipeline, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	opts := &gl.ListProjectPipelinesOptions{
+		Status:      new(gl.Success),
+		ListOptions: gl.ListOptions{PerPage: int64(min(limit, 100))},
+	}
+	var out []Pipeline
+	for {
+		page, resp, err := a.c.Pipelines.ListProjectPipelines(projectID, opts, gl.WithContext(ctx))
+		if err != nil {
+			return nil, fmt.Errorf("list successful pipelines of project %d: %w", projectID, err)
+		}
+		for _, p := range page {
+			out = append(out, Pipeline{ID: p.ID, Ref: p.Ref})
+			if len(out) == limit {
+				return out, nil
+			}
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	a.log.Debug("fetched recent successful pipelines",
+		zap.Int64("project_id", projectID), zap.Int("pipelines", len(out)))
+	return out, nil
+}
+
+func (a *apiClient) PipelineRef(ctx context.Context, projectID, pipelineID int64) (string, error) {
+	p, _, err := a.c.Pipelines.GetPipeline(projectID, pipelineID, gl.WithContext(ctx))
+	if err != nil {
+		return "", fmt.Errorf("get pipeline %d: %w", pipelineID, err)
+	}
+	return p.Ref, nil
+}
+
 func (a *apiClient) MergeRequestForBranch(ctx context.Context, projectID int64, branch string) (int64, bool, error) {
 	opts := &gl.ListProjectMergeRequestsOptions{
 		SourceBranch: new(branch),

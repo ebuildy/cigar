@@ -60,7 +60,7 @@
 - Modify: `internal/gitlab/gitlab.go` (implementations)
 - Test: `internal/gitlab/gitlab_test.go` (append two tests)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `internal/gitlab/gitlab_test.go`. Note how the existing tests in this file build a client against an `httptest` server — reuse that shape; if the file has a helper for it, use the helper instead of re-rolling the server.
 
@@ -148,12 +148,12 @@ func TestPipelineRef(t *testing.T) {
 
 Add any missing imports to the test file: `fmt`, `net/http`, `net/http/httptest`, `reflect`, `strings`, `testing`, `go.uber.org/zap`.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `go test -race ./internal/gitlab/ -run 'TestRecentSuccessfulPipelines|TestPipelineRef' -v`
 Expected: FAIL — compile error, `c.RecentSuccessfulPipelines undefined` and `Pipeline` undefined.
 
-- [ ] **Step 3: Extend the Client interface**
+- [x] **Step 3: Extend the Client interface**
 
 In `internal/gitlab/client.go`, add the type just below the `Job` struct:
 
@@ -177,7 +177,7 @@ and these two methods inside the `Client` interface, after `PipelineJobs`:
 	PipelineRef(ctx context.Context, projectID, pipelineID int64) (string, error)
 ```
 
-- [ ] **Step 4: Implement both methods**
+- [x] **Step 4: Implement both methods**
 
 In `internal/gitlab/gitlab.go`, add after `PipelineJobs`:
 
@@ -224,12 +224,12 @@ func (a *apiClient) PipelineRef(ctx context.Context, projectID, pipelineID int64
 
 The exact `client-go` symbols (`gl.Ptr`, `gl.Success`, `ListProjectPipelinesOptions`, `p.ID`'s type, `GetPipeline`'s id parameter type) must be checked against the vendored version — run `go doc gitlab.com/gitlab-org/api/client-go ListProjectPipelinesOptions` and `go doc gitlab.com/gitlab-org/api/client-go PipelinesService.GetPipeline` and adapt. If `PipelineInfo.ID` is already `int64`, drop the conversion. The surrounding file uses `new(x)` as its pointer helper in places — match whatever the package actually exports.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `go test -race ./internal/gitlab/ -run 'TestRecentSuccessfulPipelines|TestPipelineRef' -v`
 Expected: PASS (3 tests).
 
-- [ ] **Step 6: Fix the other Client implementations**
+- [x] **Step 6: Fix the other Client implementations**
 
 Adding interface methods breaks every stub. Run `go build ./... && go vet ./...` and add stubs where the compiler complains — at minimum `internal/reporter/reporter_test.go`'s `fakeGitLab` and any stub in `internal/command`, `internal/correlate`, `internal/chart`. Use this shape (grouped with the file's existing "unused by this path" stubs):
 
@@ -240,12 +240,12 @@ func (f *fakeGitLab) RecentSuccessfulPipelines(context.Context, int64, int) ([]g
 func (f *fakeGitLab) PipelineRef(context.Context, int64, int64) (string, error) { return "", nil }
 ```
 
-- [ ] **Step 7: Verify the whole build and suite**
+- [x] **Step 7: Verify the whole build and suite**
 
 Run: `mise r test`
 Expected: PASS, no compile errors.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add internal/gitlab cmd internal/reporter internal/command internal/correlate
