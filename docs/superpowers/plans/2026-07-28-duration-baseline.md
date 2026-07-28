@@ -2251,27 +2251,27 @@ git commit -m "docs: document the duration comparison and its settings"
 
 ## Task 12: Full verification
 
-- [ ] **Step 1: Lint and test with the race detector**
+- [x] **Step 1: Lint and test with the race detector**
 
 Run: `mise r lint test`
 Expected: both clean. `TestOversizedBodyRejected` in `internal/webhook` is a known macOS flake (passes on Linux CI) — if it is the only failure, re-run it alone to confirm and move on.
 
-- [ ] **Step 2: Chart suite**
+- [x] **Step 2: Chart suite**
 
 Run: `mise r helm:test`
 Expected: PASS.
 
-- [ ] **Step 3: Confirm nothing else queries the pipelines endpoint when disabled**
+- [x] **Step 3: Confirm nothing else queries the pipelines endpoint when disabled**
 
 Run: `go test -race ./internal/reporter/ -run TestBuildWithoutHistorySourceSkipsComparison -v`
 Expected: PASS — proof that `report.compare.enabled=false` costs zero API calls.
 
-- [ ] **Step 4: Review the diff against the spec**
+- [x] **Step 4: Review the diff against the spec**
 
 Run: `git diff main --stat`
 Expected: changes confined to `internal/{history,report,reporter,gitlab,config,e2e}`, `cmd/bot`, `deploy/chart/cigar`, `docs`, `README.md`.
 
-- [ ] **Step 5: Commit anything outstanding**
+- [x] **Step 5: Commit anything outstanding**
 
 ```bash
 git status --short

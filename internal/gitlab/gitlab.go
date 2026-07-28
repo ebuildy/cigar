@@ -74,15 +74,14 @@ func (a *apiClient) RecentSuccessfulPipelines(ctx context.Context, projectID int
 		}
 		for _, p := range page {
 			out = append(out, Pipeline{ID: p.ID, Ref: p.Ref})
-			if len(out) == limit {
-				return out, nil
-			}
 		}
-		if resp.NextPage == 0 {
+		// A page can exceed per_page; stop once limit is covered and trim below.
+		if len(out) >= limit || resp.NextPage == 0 {
 			break
 		}
 		opts.Page = resp.NextPage
 	}
+	out = out[:min(len(out), limit)]
 	a.log.Debug("fetched recent successful pipelines",
 		zap.Int64("project_id", projectID), zap.Int("pipelines", len(out)))
 	return out, nil
