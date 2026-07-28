@@ -158,9 +158,11 @@ its caller:
 func (r *Reporter) Build(ctx context.Context, projectID, pipelineID int64, excludeRefs []string) (report.Data, error)
 ```
 
-- `ProcessPipeline` passes the webhook's `ref` plus the MR's source branch when
-  it resolved one, so both ref forms of the branch are excluded. The webhook
-  `ref` is always first, making it the cache key.
+- `ProcessPipeline` passes the webhook's `ref` (the source branch, for both
+  branch and MR pipelines) plus, when `mrIID > 0`, the detached-MR ref form
+  `refs/merge-requests/<mrIID>/head` — which the pipelines API reports for MR
+  pipelines. Deriving the second form from `mrIID` costs no API call. The
+  webhook `ref` is always first, making it the cache key.
 - `bot run` calls `PipelineRef` and passes that single ref.
 - A `Baseline` error is logged at **warn** (logger named `history`, so it lands
   in `cigar_log_total`) and the report renders **without deltas**. Only the jobs
