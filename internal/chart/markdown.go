@@ -91,7 +91,7 @@ func renderMarkdown(title string, unit Unit, series []Series) ([]byte, error) {
 	// Human-readable y-axis labels (top=max, bottom=min); gutter sized to fit.
 	topLabel, botLabel := formatValue(vmax, unit), formatValue(vmin, unit)
 	gutter := max(len(topLabel), len(botLabel))
-	for r := 0; r < mdRows; r++ {
+	for r := range mdRows {
 		label := ""
 		switch r {
 		case 0:
@@ -109,10 +109,7 @@ func renderMarkdown(title string, unit Unit, series []Series) ([]byte, error) {
 	// aligned under the plot area (which begins gutter+2 chars in).
 	start := minT.Format("15:04 02/01")
 	dur := humanDuration(maxT.Sub(minT))
-	gap := width - len(start) - len(dur)
-	if gap < 1 {
-		gap = 1
-	}
+	gap := max(width-len(start)-len(dur), 1)
 	fmt.Fprintf(&b, "%*s%s%s%s\n", gutter+2, "", start, strings.Repeat(" ", gap), dur)
 	b.WriteString("```\n")
 
@@ -193,7 +190,7 @@ func downsample(v []float64, n int) []float64 {
 		return v
 	}
 	out := make([]float64, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		lo := i * len(v) / n
 		hi := (i + 1) * len(v) / n
 		if hi <= lo {

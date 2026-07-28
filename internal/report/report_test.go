@@ -350,7 +350,7 @@ func TestRenderMarksJobWithoutUsageUnavailable(t *testing.T) {
 // "stage : job" cell), failing the test if it is absent.
 func jobLine(t *testing.T, out, key string) string {
 	t.Helper()
-	for _, l := range strings.Split(out, "\n") {
+	for l := range strings.SplitSeq(out, "\n") {
 		if strings.Contains(l, key) {
 			return l
 		}

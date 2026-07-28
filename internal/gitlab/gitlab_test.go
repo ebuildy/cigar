@@ -1,7 +1,6 @@
 package gitlab
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -56,7 +55,7 @@ func TestMergeRequestForBranch(t *testing.T) {
 			if err != nil {
 				t.Fatalf("New: %v", err)
 			}
-			iid, ok, err := c.MergeRequestForBranch(context.Background(), 7, tt.branch)
+			iid, ok, err := c.MergeRequestForBranch(t.Context(), 7, tt.branch)
 			if err != nil {
 				t.Fatalf("MergeRequestForBranch: %v", err)
 			}
@@ -101,7 +100,7 @@ func TestNewClientMethods(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 
 	uid, err := c.CurrentUser(ctx)
 	if err != nil || uid != 555 {
@@ -206,7 +205,7 @@ func TestUpsertNote(t *testing.T) {
 			if err != nil {
 				t.Fatalf("New: %v", err)
 			}
-			if err := c.UpsertNote(context.Background(), 7, 3, marker, "new body"); err != nil {
+			if err := c.UpsertNote(t.Context(), 7, 3, marker, "new body"); err != nil {
 				t.Fatalf("UpsertNote: %v", err)
 			}
 			if created != tt.wantCreate {

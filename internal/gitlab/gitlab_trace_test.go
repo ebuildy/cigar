@@ -1,7 +1,6 @@
 package gitlab
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -23,7 +22,7 @@ func TestJobTrace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	got, err := c.JobTrace(context.Background(), 7, 101)
+	got, err := c.JobTrace(t.Context(), 7, 101)
 	if err != nil {
 		t.Fatalf("JobTrace: %v", err)
 	}

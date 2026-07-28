@@ -3,6 +3,12 @@ go = "1.26.5"
 golangci-lint = "2.12.2"
 goreleaser = "2.17.0"
 helm = "4.2"
+# The editor's language server. gopls type-checks with the go/types from the
+# toolchain it was *built* with, so one built by an older Go flags valid code as
+# errors (e.g. Go 1.26's new(expr)). Pinning it here keeps it in step with the
+# `go` above instead of drifting — .vscode/settings.json disables the Go
+# extension's own auto-update, since mise owns the toolchain.
+"go:golang.org/x/tools/gopls" = "0.23.0"
 # Local dev-cluster stack (.dev/): a kind cluster running GitLab, agentgateway,
 # and a runner via .dev/helmfile.yaml.gotmpl. Docker or Podman (for kind's
 # node containers) isn't mise-managed; install it yourself.
@@ -20,7 +26,20 @@ run = "go build -o bin/bot ./cmd/bot"
 [tasks.test]
 description = "Run all tests with the race detector"
 env = { CGO_ENABLED = "1" } # -race requires cgo
-run = "go test -race ./..."
+# Tests assert on defaults ("gitlab.url is https://gitlab.com when unset") and
+# on required-field errors, so a dev shell exporting the real values makes them
+# fail. Clear the whole config surface first — every env var in internal/config
+# (the `settings` table plus the four secrets and $CIGAR_CONFIG). mise's
+# `env = { VAR = false }` does not unset in task scope, hence the shell builtin.
+run = """
+unset GITLAB_URL GITLAB_TOKEN PROMETHEUS_URL PROMETHEUS_SCRAPE_INTERVAL \
+      POD_RESOLVER LOG_LEVEL SERVER_LISTEN_ADDR SERVER_OPS_ADDR \
+      WEBHOOK_AUTH_METHOD WEBHOOK_SECRET WEBHOOK_SIGNING_TOKEN \
+      COMMANDS_ENABLED COMMANDS_CHART_FORMAT COMMANDS_SIGNING_KEY \
+      REPORT_THROTTLE_WARN_RATIO REPORT_LONG_JOB_DURATION \
+      REPORT_MEMORY_PRESSURE_RATIO CIGAR_CONFIG
+go test -race ./...
+"""
 
 [tasks."test:e2e"]
 description = "Run only the end-to-end tests (mock GitLab + Prometheus), verbose"

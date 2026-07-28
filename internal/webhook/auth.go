@@ -91,7 +91,7 @@ func (a signingTokenAuth) Authenticate(c fiber.Ctx) bool {
 	expected := []byte("v1," + base64.StdEncoding.EncodeToString(mac.Sum(nil)))
 
 	// GitLab may send several space-separated signatures during key rotation.
-	for _, entry := range strings.Fields(sigHeader) {
+	for entry := range strings.FieldsSeq(sigHeader) {
 		if subtle.ConstantTimeCompare([]byte(entry), expected) == 1 {
 			return true
 		}

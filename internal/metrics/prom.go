@@ -201,11 +201,7 @@ func (s *PromSource) rangePoints(ctx context.Context, query string, start, end t
 
 // seriesStep keeps charts to ~120 points, floored at one second.
 func seriesStep(window time.Duration) time.Duration {
-	step := window / 120
-	if step < time.Second {
-		step = time.Second
-	}
-	return step
+	return max(window/120, time.Second)
 }
 
 // rangeVector is the [range] inside rate(). It is at least four scrape intervals
@@ -213,9 +209,5 @@ func seriesStep(window time.Duration) time.Duration {
 // even for short-lived pods and slight scrape jitter — a 2×scrape window can
 // straddle just one sample and yield an empty series.
 func rangeVector(step, scrape time.Duration) string {
-	rv := step
-	if rv < 4*scrape {
-		rv = 4 * scrape
-	}
-	return fmt.Sprintf("%dms", rv.Milliseconds())
+	return fmt.Sprintf("%dms", max(step, 4*scrape).Milliseconds())
 }

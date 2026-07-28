@@ -95,7 +95,7 @@ func adviseFixture(t *testing.T) (*Reporter, *adviseGitLab, *advice.Engine) {
 func TestAdviseFetchesTraceOnlyForThrottledJobs(t *testing.T) {
 	r, gl, eng := adviseFixture(t)
 
-	all, err := r.Advise(context.Background(), 7, 42, "", eng)
+	all, err := r.Advise(t.Context(), 7, 42, "", eng)
 	if err != nil {
 		t.Fatalf("Advise: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestAdviseFetchesTraceOnlyForThrottledJobs(t *testing.T) {
 func TestAdviseJobFilter(t *testing.T) {
 	r, _, eng := adviseFixture(t)
 
-	all, err := r.Advise(context.Background(), 7, 42, "unit", eng)
+	all, err := r.Advise(t.Context(), 7, 42, "unit", eng)
 	if err != nil {
 		t.Fatalf("Advise: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestAdviseJobFilter(t *testing.T) {
 		}
 	}
 
-	if _, err := r.Advise(context.Background(), 7, 42, "nope", eng); !errors.Is(err, gitlab.ErrJobNotFound) {
+	if _, err := r.Advise(t.Context(), 7, 42, "nope", eng); !errors.Is(err, gitlab.ErrJobNotFound) {
 		t.Fatalf("Advise with an unknown job = %v, want gitlab.ErrJobNotFound", err)
 	}
 }
@@ -144,7 +144,7 @@ func TestAdviseSurvivesMissingPod(t *testing.T) {
 	r, _, eng := adviseFixture(t)
 	r.Resolver = &advisePods{pods: map[int64]string{}} // nothing correlates
 
-	all, err := r.Advise(context.Background(), 7, 42, "compile", eng)
+	all, err := r.Advise(t.Context(), 7, 42, "compile", eng)
 	if err != nil {
 		t.Fatalf("Advise: %v", err)
 	}

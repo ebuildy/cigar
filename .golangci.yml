@@ -1,0 +1,12 @@
+# golangci-lint config. The version is pinned in mise.toml so CI (via
+# jdx/mise-action) and local `mise r lint` run identical rules.
+version: "2"
+
+linters:
+  # errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  enable:
+    # Flags code that predates the Go version in go.mod: range-over-int,
+    # min/max builtins, strings.SplitSeq/FieldsSeq, new(expr), etc. Keeps the
+    # tree on current idioms instead of letting them drift back in.
+    - modernize

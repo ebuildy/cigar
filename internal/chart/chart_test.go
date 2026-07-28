@@ -168,7 +168,7 @@ func TestRenderMarkdownBytesLabels(t *testing.T) {
 func TestRenderMarkdownXAxis(t *testing.T) {
 	start := time.Date(2026, 7, 23, 14, 5, 0, 0, time.UTC)
 	var pts []Point
-	for i := 0; i < 10; i++ { // 9 intervals * 30s = 4m30s span
+	for i := range 10 { // 9 intervals * 30s = 4m30s span
 		pts = append(pts, Point{X: start.Add(time.Duration(i) * 30 * time.Second), Y: float64(i)})
 	}
 	md, err := Render(Markdown, "CPU (cores)", UnitCores, []Series{{Label: "cpu", Points: pts}})

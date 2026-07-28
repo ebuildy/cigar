@@ -58,7 +58,7 @@ func TestTraceResolverPodForJob(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := NewTraceResolver(stubTraceFetcher{trace: tt.trace}, zap.NewNop())
-			pod, ok, err := r.PodForJob(context.Background(), 3, 101, time.Time{}, time.Time{})
+			pod, ok, err := r.PodForJob(t.Context(), 3, 101, time.Time{}, time.Time{})
 			if err != nil {
 				t.Fatalf("PodForJob: unexpected error %v", err)
 			}
@@ -74,7 +74,7 @@ func TestTraceResolverPodForJob(t *testing.T) {
 
 func TestTraceResolverFetchError(t *testing.T) {
 	r := NewTraceResolver(stubTraceFetcher{err: errors.New("boom")}, zap.NewNop())
-	_, _, err := r.PodForJob(context.Background(), 3, 101, time.Time{}, time.Time{})
+	_, _, err := r.PodForJob(t.Context(), 3, 101, time.Time{}, time.Time{})
 	if err == nil {
 		t.Fatal("PodForJob: want error when JobTrace fails, got nil")
 	}

@@ -4,6 +4,13 @@
   // PATH. Don't let the Go extension fight it by auto-updating tools.
   "go.useLanguageServer": true,
   "go.toolsManagement.autoUpdate": false,
+  // gopls is pinned in mise.toml, so use mise's shim rather than whatever
+  // stale copy sits in GOPATH/bin: gopls type-checks with the go/types from
+  // the toolchain it was built with, and one built by an older Go reports
+  // valid code as errors (e.g. Go 1.26's new(expr)).
+  "go.alternateTools": {
+    "gopls": "~/.local/share/mise/shims/gopls"
+  },
   // Match `mise r lint` (golangci-lint v2 — the same binary CI runs).
   "go.lintTool": "golangci-lint",
   "go.lintFlags": ["run"],

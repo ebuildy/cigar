@@ -57,8 +57,8 @@ func (a *apiClient) PipelineJobs(ctx context.Context, projectID, pipelineID int6
 
 func (a *apiClient) MergeRequestForBranch(ctx context.Context, projectID int64, branch string) (int64, bool, error) {
 	opts := &gl.ListProjectMergeRequestsOptions{
-		SourceBranch: gl.Ptr(branch),
-		State:        gl.Ptr("opened"),
+		SourceBranch: new(branch),
+		State:        new("opened"),
 		ListOptions:  gl.ListOptions{PerPage: 1},
 	}
 	mrs, _, err := a.c.MergeRequests.ListProjectMergeRequests(projectID, opts, gl.WithContext(ctx))
@@ -96,7 +96,7 @@ func (a *apiClient) UpsertNote(ctx context.Context, projectID, mrIID int64, mark
 				continue
 			}
 			if _, _, err := a.c.Notes.UpdateMergeRequestNote(projectID, mrIID, root.ID,
-				&gl.UpdateMergeRequestNoteOptions{Body: gl.Ptr(body)}, gl.WithContext(ctx)); err != nil {
+				&gl.UpdateMergeRequestNoteOptions{Body: new(body)}, gl.WithContext(ctx)); err != nil {
 				return fmt.Errorf("update note %d on MR !%d: %w", root.ID, mrIID, err)
 			}
 			a.log.Debug("updated existing MR report note in place",
@@ -109,7 +109,7 @@ func (a *apiClient) UpsertNote(ctx context.Context, projectID, mrIID int64, mark
 		opts.Page = resp.NextPage
 	}
 	if _, _, err := a.c.Notes.CreateMergeRequestNote(projectID, mrIID,
-		&gl.CreateMergeRequestNoteOptions{Body: gl.Ptr(body)}, gl.WithContext(ctx)); err != nil {
+		&gl.CreateMergeRequestNoteOptions{Body: new(body)}, gl.WithContext(ctx)); err != nil {
 		return fmt.Errorf("create note on MR !%d: %w", mrIID, err)
 	}
 	a.log.Debug("created new MR report note", zap.Int64("project_id", projectID), zap.Int64("mr_iid", mrIID))
@@ -160,7 +160,7 @@ func (a *apiClient) UploadFile(ctx context.Context, projectID int64, filename st
 
 func (a *apiClient) CreateDiscussionReply(ctx context.Context, projectID, mrIID int64, discussionID, body string) error {
 	_, _, err := a.c.Discussions.AddMergeRequestDiscussionNote(projectID, mrIID, discussionID,
-		&gl.AddMergeRequestDiscussionNoteOptions{Body: gl.Ptr(body)}, gl.WithContext(ctx))
+		&gl.AddMergeRequestDiscussionNoteOptions{Body: new(body)}, gl.WithContext(ctx))
 	if err != nil {
 		return fmt.Errorf("reply in discussion %s on MR !%d: %w", discussionID, mrIID, err)
 	}

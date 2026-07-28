@@ -120,7 +120,7 @@ func TestProcessPipeline(t *testing.T) {
 				Metrics:  &fakeSource{},
 				Log:      zap.NewNop(),
 			}
-			posted, err := r.ProcessPipeline(context.Background(), 7, 42, tt.mrIID, tt.ref, "success")
+			posted, err := r.ProcessPipeline(t.Context(), 7, 42, tt.mrIID, tt.ref, "success")
 			if err != nil {
 				t.Fatalf("ProcessPipeline: %v", err)
 			}
@@ -150,7 +150,7 @@ func TestProcessPipelineSignsNote(t *testing.T) {
 		SigningKey: []byte("k"),
 		Log:        zap.NewNop(),
 	}
-	posted, err := r.ProcessPipeline(context.Background(), 7, 42, 3, "feature-x", "success")
+	posted, err := r.ProcessPipeline(t.Context(), 7, 42, 3, "feature-x", "success")
 	if err != nil || !posted {
 		t.Fatalf("ProcessPipeline posted=%v err=%v", posted, err)
 	}
@@ -166,7 +166,7 @@ func TestProcessPipelineSignsNote(t *testing.T) {
 func TestProcessPipelineNoKeyPlainMarker(t *testing.T) {
 	gl := &fakeGitLab{jobs: []gitlab.Job{{ID: 1, Name: "compile"}}}
 	r := &Reporter{GitLab: gl, Resolver: &fakeResolver{}, Metrics: &fakeSource{}, Log: zap.NewNop()}
-	if _, err := r.ProcessPipeline(context.Background(), 7, 42, 3, "feature-x", "success"); err != nil {
+	if _, err := r.ProcessPipeline(t.Context(), 7, 42, 3, "feature-x", "success"); err != nil {
 		t.Fatalf("ProcessPipeline: %v", err)
 	}
 	if !strings.Contains(gl.upsertBody, report.Marker) {
@@ -182,7 +182,7 @@ func TestBuildMapsStageAndName(t *testing.T) {
 		Metrics:  &fakeSource{},
 		Log:      zap.NewNop(),
 	}
-	data, err := r.Build(context.Background(), 7, 42)
+	data, err := r.Build(t.Context(), 7, 42)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestBuildCountsRanJobs(t *testing.T) {
 		Metrics:  &fakeSource{},
 		Log:      zap.NewNop(),
 	}
-	data, err := r.Build(context.Background(), 7, 42)
+	data, err := r.Build(t.Context(), 7, 42)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestBuild(t *testing.T) {
 				ThrottleWarnRatio: 0.25,
 				Log:               zap.NewNop(),
 			}
-			data, err := r.Build(context.Background(), 7, 42)
+			data, err := r.Build(t.Context(), 7, 42)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("Build succeeded, want error")

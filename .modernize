@@ -1,0 +1,3 @@
+# Ignored modernization suggestions
+# Format: <date> <category> <description>
+2026-07-28 govulncheck-ci Declined adding govulncheck as a mise task + CI gate; run it ad hoc instead

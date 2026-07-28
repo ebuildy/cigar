@@ -85,7 +85,7 @@ func newHandler(gl *fakeGitLab, res *fakeResolver, se *fakeSeries) *Handler {
 func TestHandleHelp(t *testing.T) {
 	gl := &fakeGitLab{discussion: signedRoot(42, 3)}
 	h := newHandler(gl, &fakeResolver{}, &fakeSeries{})
-	err := h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "help"})
+	err := h.Handle(t.Context(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "help"})
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestHandleHelp(t *testing.T) {
 func TestHandleIgnoresOwnMarkedNote(t *testing.T) {
 	gl := &fakeGitLab{discussion: signedRoot(42, 3)}
 	h := newHandler(gl, &fakeResolver{}, &fakeSeries{})
-	_ = h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "help\n\n" + report.Marker})
+	_ = h.Handle(t.Context(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "help\n\n" + report.Marker})
 	if len(gl.replies) != 0 {
 		t.Fatalf("replied to a marker-tagged (own) note; replies=%v", gl.replies)
 	}
@@ -115,7 +115,7 @@ func TestHandleRejectsNonBotRoot(t *testing.T) {
 	d.RootNoteAuthorID = 111
 	gl := &fakeGitLab{discussion: d}
 	h := newHandler(gl, &fakeResolver{}, &fakeSeries{})
-	_ = h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "help"})
+	_ = h.Handle(t.Context(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "help"})
 	if len(gl.replies) != 0 {
 		t.Fatal("replied in a thread whose root is not the bot's report")
 	}
@@ -126,7 +126,7 @@ func TestHandleRejectsTamperedMarker(t *testing.T) {
 	d.RootNoteBody = "<!-- ci-resources-bot p=42 m=3 sig=deadbeef -->"
 	gl := &fakeGitLab{discussion: d}
 	h := newHandler(gl, &fakeResolver{}, &fakeSeries{})
-	_ = h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "help"})
+	_ = h.Handle(t.Context(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "help"})
 	if len(gl.replies) != 0 {
 		t.Fatal("acted on a tampered (bad-HMAC) report note")
 	}
@@ -135,7 +135,7 @@ func TestHandleRejectsTamperedMarker(t *testing.T) {
 func TestHandleRejectsMRMismatch(t *testing.T) {
 	gl := &fakeGitLab{discussion: signedRoot(42, 999)}
 	h := newHandler(gl, &fakeResolver{}, &fakeSeries{})
-	_ = h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "help"})
+	_ = h.Handle(t.Context(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "help"})
 	if len(gl.replies) != 0 {
 		t.Fatal("acted when the marker's MR did not match the event MR")
 	}
@@ -162,7 +162,7 @@ func TestHandleDetailsJob(t *testing.T) {
 	res := &fakeResolver{pods: map[int64]string{1: "runner-abc-project-7-concurrent-0"}}
 	h := newHandler(gl, res, se)
 
-	err := h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "details job build"})
+	err := h.Handle(t.Context(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "details job build"})
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestHandleDetailsPodAllowlist(t *testing.T) {
 	res := &fakeResolver{pods: map[int64]string{1: pod}}
 	h := newHandler(gl, res, se)
 
-	if err := h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "details pod " + pod}); err != nil {
+	if err := h.Handle(t.Context(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "details pod " + pod}); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 	if gl.uploads != 3 {
@@ -205,7 +205,7 @@ func TestHandleDetailsPodNotInReport(t *testing.T) {
 	res := &fakeResolver{pods: map[int64]string{1: "runner-real-project-7-concurrent-0"}}
 	h := newHandler(gl, res, se)
 
-	if err := h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "details pod runner-evil-project-99-concurrent-0"}); err != nil {
+	if err := h.Handle(t.Context(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "details pod runner-evil-project-99-concurrent-0"}); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 	if gl.uploads != 0 {
@@ -228,7 +228,7 @@ func TestHandleDetailsMarkdownInline(t *testing.T) {
 	h := newHandler(gl, res, se)
 	h.ChartFormat = chart.Markdown
 
-	if err := h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "details job build"}); err != nil {
+	if err := h.Handle(t.Context(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "details job build"}); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 	// Markdown charts are embedded in the reply, never uploaded.
@@ -246,7 +246,7 @@ func TestHandleDetailsMarkdownInline(t *testing.T) {
 func TestHandleDetailsUnknownJob(t *testing.T) {
 	gl := &fakeGitLab{discussion: signedRoot(42, 3), jobs: []gitlab.Job{{ID: 1, Name: "build"}}}
 	h := newHandler(gl, &fakeResolver{}, &fakeSeries{series: nonEmptySeries()})
-	if err := h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "details job nope"}); err != nil {
+	if err := h.Handle(t.Context(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "details job nope"}); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 	if gl.uploads != 0 || len(gl.replies) != 1 {
@@ -276,7 +276,7 @@ func TestHandleAdviseAllJobs(t *testing.T) {
 	h := newHandler(gl, &fakeResolver{}, &fakeSeries{})
 	h.Advisor = adv
 
-	if err := h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "advise"}); err != nil {
+	if err := h.Handle(t.Context(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "advise"}); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 	if adv.calls != 1 || adv.gotFilter != "" {
@@ -299,7 +299,7 @@ func TestHandleAdviseOneJob(t *testing.T) {
 	h := newHandler(gl, &fakeResolver{}, &fakeSeries{})
 	h.Advisor = adv
 
-	if err := h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "advise build"}); err != nil {
+	if err := h.Handle(t.Context(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "advise build"}); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 	if adv.gotFilter != "build" {
@@ -317,7 +317,7 @@ func TestHandleAdviseUnknownJob(t *testing.T) {
 	h := newHandler(gl, &fakeResolver{}, &fakeSeries{})
 	h.Advisor = adv
 
-	if err := h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "advise nope"}); err != nil {
+	if err := h.Handle(t.Context(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "advise nope"}); err != nil {
 		t.Fatalf("Handle must not fail on an unknown job: %v", err)
 	}
 	if len(gl.replies) != 1 || !strings.Contains(gl.replies[0], "not part of pipeline") {
@@ -329,7 +329,7 @@ func TestHandleAdviseWithoutAdvisor(t *testing.T) {
 	gl := &fakeGitLab{discussion: signedRoot(42, 3)}
 	h := newHandler(gl, &fakeResolver{}, &fakeSeries{}) // Advisor left nil
 
-	if err := h.Handle(context.Background(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "advise"}); err != nil {
+	if err := h.Handle(t.Context(), NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "advise"}); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 	if len(gl.replies) != 1 || !strings.Contains(gl.replies[0], "not available") {

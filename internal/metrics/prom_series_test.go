@@ -1,7 +1,6 @@
 package metrics
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -39,7 +38,7 @@ func TestPodSeries(t *testing.T) {
 	start := time.Unix(1752912000, 0)
 	end := start.Add(60 * time.Second)
 
-	s, err := src.PodSeries(context.Background(), "runner-x", start, end)
+	s, err := src.PodSeries(t.Context(), "runner-x", start, end)
 	if err != nil {
 		t.Fatalf("PodSeries: %v", err)
 	}
@@ -67,7 +66,7 @@ func TestPodActiveSpan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPromSource: %v", err)
 	}
-	start, end, ok, err := src.PodActiveSpan(context.Background(), "runner-x")
+	start, end, ok, err := src.PodActiveSpan(t.Context(), "runner-x")
 	if err != nil {
 		t.Fatalf("PodActiveSpan: %v", err)
 	}

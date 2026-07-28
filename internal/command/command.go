@@ -95,7 +95,7 @@ func Parse(body string) (Command, bool) {
 }
 
 func firstNonEmptyLine(body string) string {
-	for _, l := range strings.Split(body, "\n") {
+	for l := range strings.SplitSeq(body, "\n") {
 		if t := strings.TrimSpace(l); t != "" {
 			return t
 		}
