@@ -411,7 +411,7 @@ git commit -m "feat(history): baseline types and median reduction"
 
 This task builds the pure reduction (job lists → `Baseline`) and its ref filtering. The GitLab fan-out is wired in Task 4.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `internal/history/history_test.go`:
 
@@ -520,12 +520,12 @@ func TestReduceBuildsMedians(t *testing.T) {
 
 Add `"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/gitlab"` to the test file's imports.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `go test -race ./internal/history/ -v`
 Expected: FAIL — `pipelineWallClock`, `jobDurations`, `selectSamples`, `reduce` undefined.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `internal/history/fetcher.go`:
 
@@ -625,12 +625,12 @@ func reduce(pipelines [][]gitlab.Job) Baseline {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `go test -race ./internal/history/ -v`
 Expected: PASS, all tests including the Task 2 ones.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/history
