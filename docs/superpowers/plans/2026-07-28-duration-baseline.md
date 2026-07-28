@@ -260,7 +260,7 @@ git commit -m "feat(gitlab): list recent successful pipelines and a pipeline's r
 - Create: `internal/history/history.go`
 - Test: `internal/history/history_test.go`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `internal/history/history_test.go`:
 
@@ -318,12 +318,12 @@ func TestNewStatDoesNotMutateInput(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `go test -race ./internal/history/ -run TestMedian -v`
 Expected: FAIL — `newStat` undefined.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `internal/history/history.go`:
 
@@ -389,12 +389,12 @@ func newStat(samples []time.Duration) (Stat, bool) {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `go test -race ./internal/history/ -v`
 Expected: PASS (both tests, all subtests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/history
