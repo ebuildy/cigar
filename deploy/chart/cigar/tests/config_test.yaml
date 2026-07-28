@@ -22,6 +22,11 @@ tests:
               throttle_warn_ratio: "0.25"
               long_job_duration: "10m"
               memory_pressure_ratio: "0.9"
+              compare:
+                enabled: "true"
+                duration_delta_ratio: "0.05"
+                history_pipelines: "6"
+                cache_ttl: "1h"
             commands:
               enabled: "false"
               chart_format: "png"
@@ -84,3 +89,26 @@ tests:
     asserts:
       - failedTemplate:
           errorMessage: 'config.webhook.authMethod must be "secret" or "signing_token", got "mtls"'
+
+  - it: propagates compare overrides into config.yaml
+    set:
+      config:
+        report:
+          compare:
+            enabled: false
+            durationDeltaRatio: "0.10"
+            historyPipelines: "12"
+            cacheTtl: "30m"
+    asserts:
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: 'compare:\s+enabled: "false"'
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: 'duration_delta_ratio: "0.10"'
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: 'history_pipelines: "12"'
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: 'cache_ttl: "30m"'

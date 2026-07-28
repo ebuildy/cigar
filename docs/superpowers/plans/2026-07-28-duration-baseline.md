@@ -2083,7 +2083,7 @@ git commit -m "test(e2e): assert the duration baseline and ref exclusion end to 
 - Modify: `deploy/chart/cigar/templates/configmap.yaml`
 - Modify: `deploy/chart/cigar/tests/config_test.yaml`
 
-- [ ] **Step 1: Write the failing chart test**
+- [x] **Step 1: Write the failing chart test**
 
 In `deploy/chart/cigar/tests/config_test.yaml`, extend the defaults assertion's expected `config.yaml` — insert into the `report:` block, after `memory_pressure_ratio`:
 
@@ -2124,12 +2124,12 @@ Then add an override case at the end of the suite:
           pattern: 'cache_ttl: "30m"'
 ```
 
-- [ ] **Step 2: Run the chart tests to verify they fail**
+- [x] **Step 2: Run the chart tests to verify they fail**
 
 Run: `mise r helm:test`
 Expected: FAIL — the rendered `config.yaml` has no `compare:` block.
 
-- [ ] **Step 3: Add the values**
+- [x] **Step 3: Add the values**
 
 In `deploy/chart/cigar/values.yaml`, inside `config.report`, after `memoryPressureRatio`:
 
@@ -2144,7 +2144,7 @@ In `deploy/chart/cigar/values.yaml`, inside `config.report`, after `memoryPressu
       cacheTtl: "1h"
 ```
 
-- [ ] **Step 4: Render it in the ConfigMap**
+- [x] **Step 4: Render it in the ConfigMap**
 
 In `deploy/chart/cigar/templates/configmap.yaml`, inside the `report:` block after `memory_pressure_ratio`:
 
@@ -2156,12 +2156,12 @@ In `deploy/chart/cigar/templates/configmap.yaml`, inside the `report:` block aft
         cache_ttl: {{ .Values.config.report.compare.cacheTtl | quote }}
 ```
 
-- [ ] **Step 5: Run the chart tests to verify they pass**
+- [x] **Step 5: Run the chart tests to verify they pass**
 
 Run: `mise r helm:test`
 Expected: PASS — `helm lint` clean and every suite green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add deploy/chart/cigar

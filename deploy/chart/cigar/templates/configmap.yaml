@@ -22,6 +22,11 @@ data:
       throttle_warn_ratio: {{ .Values.config.report.throttleWarnRatio | quote }}
       long_job_duration: {{ .Values.config.report.longJobDuration | quote }}
       memory_pressure_ratio: {{ .Values.config.report.memoryPressureRatio | quote }}
+      compare:
+        enabled: {{ .Values.config.report.compare.enabled | quote }}
+        duration_delta_ratio: {{ .Values.config.report.compare.durationDeltaRatio | quote }}
+        history_pipelines: {{ .Values.config.report.compare.historyPipelines | quote }}
+        cache_ttl: {{ .Values.config.report.compare.cacheTtl | quote }}
     commands:
       enabled: {{ .Values.config.commands.enabled | quote }}
       chart_format: {{ .Values.config.commands.chartFormat | quote }}
