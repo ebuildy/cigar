@@ -43,6 +43,10 @@ func (f *fakeGitLab) CreateDiscussionReply(_ context.Context, _, _ int64, _, bod
 	f.replies = append(f.replies, body)
 	return nil
 }
+func (f *fakeGitLab) RecentSuccessfulPipelines(context.Context, int64, int) ([]gitlab.Pipeline, error) {
+	return nil, nil
+}
+func (f *fakeGitLab) PipelineRef(context.Context, int64, int64) (string, error) { return "", nil }
 
 type fakeResolver struct{ pods map[int64]string }
 

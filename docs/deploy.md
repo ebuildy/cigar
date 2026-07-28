@@ -88,6 +88,11 @@ config:
     throttleWarnRatio: "0.25"
     longJobDuration: "10m"
     memoryPressureRatio: "0.9"
+    compare:
+      enabled: true
+      durationDeltaRatio: "0.05"
+      historyPipelines: "6"
+      cacheTtl: "1h"
   commands:
     enabled: false
     chartFormat: png

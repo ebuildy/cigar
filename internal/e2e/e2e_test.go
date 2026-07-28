@@ -25,6 +25,7 @@ import (
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/command"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/correlate"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/gitlab"
+	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/history"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/metrics"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/report"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/reporter"
@@ -143,6 +144,34 @@ func (m *mockGitLab) server(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusCreated)
 			_, _ = fmt.Fprint(w, `{"id":99}`)
 		})
+	// Baseline: three successful pipelines on other refs (2m, 4m, 6m -> median
+	// 4m) plus one on the reported branch and one under the MR ref form, both of
+	// which must be excluded from the comparison.
+	baselineJobs := map[int64]time.Duration{
+		901: 2 * time.Minute,
+		902: 4 * time.Minute,
+		903: 6 * time.Minute,
+		904: 30 * time.Minute, // on branchRef: excluded
+		905: 40 * time.Minute, // on refs/merge-requests/<mrIID>/head: excluded
+	}
+	mux.HandleFunc(fmt.Sprintf("GET /api/v4/projects/%d/pipelines", projectID),
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = fmt.Fprintf(w, `[
+				{"id":905,"ref":"refs/merge-requests/%d/head","status":"success"},
+				{"id":904,"ref":%q,"status":"success"},
+				{"id":903,"ref":"main","status":"success"},
+				{"id":902,"ref":"main","status":"success"},
+				{"id":901,"ref":"main","status":"success"}
+			]`, mrIID, branchRef)
+		})
+	for id, dur := range baselineJobs {
+		mux.HandleFunc(fmt.Sprintf("GET /api/v4/projects/%d/pipelines/%d/jobs", projectID, id),
+			func(w http.ResponseWriter, _ *http.Request) {
+				start := time.Now().Add(-2 * time.Hour).UTC()
+				_, _ = fmt.Fprintf(w, `[{"id":%d,"name":"build","status":"success","started_at":%q,"finished_at":%q}]`,
+					id*10, start.Format(time.RFC3339), start.Add(dur).Format(time.RFC3339))
+			})
+	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("mock gitlab: unexpected request %s %s", r.Method, r.URL.Path)
 		w.WriteHeader(http.StatusNotFound)
@@ -248,11 +277,18 @@ func harness(t *testing.T, podResolver string) (*fiber.App, *mockGitLab, *mockPr
 		t.Fatalf("source: %v", err)
 	}
 	rep := &reporter.Reporter{
-		GitLab:            glClient,
-		Resolver:          resolver,
-		Metrics:           source,
-		ThrottleWarnRatio: 0.25,
-		Log:               log,
+		GitLab:   glClient,
+		Resolver: resolver,
+		Metrics:  source,
+		History: &history.Fetcher{
+			GitLab:    glClient,
+			Pipelines: 3,
+			TTL:       time.Hour,
+			Log:       log,
+		},
+		ThrottleWarnRatio:  0.25,
+		DurationDeltaRatio: 0.05,
+		Log:                log,
 	}
 
 	// Same queue+worker shape as `bot serve`: merge_request may be absent, in
@@ -605,5 +641,44 @@ func TestNoteCommandAdvise(t *testing.T) {
 		if !strings.Contains(reply, want) {
 			t.Fatalf("reply missing %q:\n%s", want, reply)
 		}
+	}
+}
+
+// TestPipelineReportComparesDuration proves the whole chain produces a duration
+// delta, and that pipelines on the reported refs are excluded from the median.
+func TestPipelineReportComparesDuration(t *testing.T) {
+	app, glMock, _ := harness(t, "trace")
+
+	payload := fmt.Sprintf(`{
+		"object_kind": "pipeline",
+		"object_attributes": {"id": %d, "status": "success", "ref": %q},
+		"project": {"id": %d},
+		"merge_request": {"iid": %d}
+	}`, pipelineID, branchRef, projectID, mrIID)
+
+	postWebhook(t, app, payload)
+	waitFor(t, "note created", func() bool {
+		glMock.mu.Lock()
+		defer glMock.mu.Unlock()
+		return len(glMock.notes) == 1
+	})
+	glMock.mu.Lock()
+	body := glMock.notes[0]
+	glMock.mu.Unlock()
+
+	// The reported pipeline's job ran from -10m to -5m, i.e. 5m, against the 4m
+	// median of pipelines 901-903 (2m, 4m, 6m): +1m, +25%. If either excluded
+	// pipeline (30m on branchRef, 40m on the MR ref) had leaked into the sample
+	// set, the median — and this delta — would be far larger.
+	const wantDelta = "🔺 +1m 00s (+25%)"
+	if !strings.Contains(body, wantDelta) {
+		t.Errorf("report is missing the expected delta %q:\n%s", wantDelta, body)
+	}
+	if !strings.Contains(body, "| Duration |") {
+		t.Errorf("details table is missing the Duration column:\n%s", body)
+	}
+	// Three samples is a thin baseline, so the footnote must name the count.
+	if !strings.Contains(body, "median of 3 recent successful pipelines") {
+		t.Errorf("thin-baseline footnote missing:\n%s", body)
 	}
 }

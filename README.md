@@ -15,7 +15,19 @@ It receives GitLab **Pipeline event** webhooks, queries **Prometheus** (cadvisor
 ## What you get on your MR
 
 - **Pipeline totals** — wall-clock duration (earliest start → latest finish), total memory (sum of job peaks), peak memory, CPU time consumed, network RX/TX, disk read/write.
-- **Per-job table** — job name, CPU time, peak memory, memory request/limit, CPU request/limit, throttled %, network, disk read/write.
+- **Per-job table** — job name, duration, CPU time, peak memory, memory request/limit, CPU request/limit, throttled %, network, disk read/write.
+- **Duration comparison** — the pipeline's and each job's duration against the median of recent successful pipelines on *other* refs, annotated when it moves beyond ±5 %:
+
+```text
+| Pipeline duration | 4m 12s 🔺 +1m 12s (+40%) |
+
+| Stage : Job      | Duration                 | CPU time  | Peak memory | …
+|---|---|---|---|
+| build : compile  | 2m 30s 🔻 −1m 30s (−38%) | 42.5 s    | 412.0 MiB   | …
+| test : unit      | 2m 30s                   | 18.0 s    | 150.0 MiB   | …
+| deploy : staging | —                        | _no data_ |             | …
+```
+
 - **⚠️ CPU throttling warnings** when `throttled_periods / periods` exceeds the threshold (default 25 %), with concrete advice: set `KUBERNETES_CPU_REQUEST` / `KUBERNETES_CPU_LIMIT` (and the memory equivalents) on the job or project.
 - **Right-sizing hints** — over-provisioning advice when usage ≪ requests, OOM-risk warning when peak memory is near the limit.
 
@@ -90,6 +102,10 @@ works with just env).
 | `report.throttle_warn_ratio` | `REPORT_THROTTLE_WARN_RATIO` | `0.25` | ⚠️ warning threshold |
 | `report.long_job_duration` | `REPORT_LONG_JOB_DURATION` | `10m` | advice: split long jobs |
 | `report.memory_pressure_ratio` | `REPORT_MEMORY_PRESSURE_RATIO` | `0.9` | advice: OOMKill risk |
+| `report.compare.enabled` | `REPORT_COMPARE_ENABLED` | `true` | duration comparison against recent pipelines |
+| `report.compare.duration_delta_ratio` | `REPORT_COMPARE_DURATION_DELTA_RATIO` | `0.05` | change above which a delta is annotated |
+| `report.compare.history_pipelines` | `REPORT_COMPARE_HISTORY_PIPELINES` | `6` | baseline size; minimum `3` when enabled |
+| `report.compare.cache_ttl` | `REPORT_COMPARE_CACHE_TTL` | `1h` | baseline cache lifetime; `0` disables caching |
 | `commands.enabled` | `COMMANDS_ENABLED` | `false` | interactive report commands |
 | `commands.chart_format` | `COMMANDS_CHART_FORMAT` | `png` | `png`, `svg` or `markdown` |
 | `server.listen_addr` | `SERVER_LISTEN_ADDR` | `:8080` | webhook listen address |

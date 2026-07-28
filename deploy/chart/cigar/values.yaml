@@ -30,6 +30,14 @@ config:
     throttleWarnRatio: "0.25"
     longJobDuration: "10m"
     memoryPressureRatio: "0.9"
+    # Compare this pipeline's duration against recent successful pipelines on
+    # other refs, annotating changes beyond durationDeltaRatio. historyPipelines
+    # must be at least 3 when enabled.
+    compare:
+      enabled: true
+      durationDeltaRatio: "0.05"
+      historyPipelines: "6"
+      cacheTtl: "1h"
   commands:
     # Interactive report commands. Requires secrets.COMMANDS_SIGNING_KEY when
     # true.

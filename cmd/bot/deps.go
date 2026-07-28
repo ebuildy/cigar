@@ -13,6 +13,7 @@ import (
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/config"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/correlate"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/gitlab"
+	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/history"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/metrics"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/reporter"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/telemetry"
@@ -64,13 +65,26 @@ func newReporter(cfg *config.Config, log *zap.Logger, obs metrics.QueryObserver)
 	if err != nil {
 		return nil, err
 	}
+	// A disabled comparison leaves History nil: the reporter then makes no
+	// baseline API calls at all.
+	var hist history.Source
+	if cfg.CompareEnabled {
+		hist = &history.Fetcher{
+			GitLab:    gl,
+			Pipelines: cfg.CompareHistoryPipelines,
+			TTL:       cfg.CompareCacheTTL,
+			Log:       log.Named("history"),
+		}
+	}
 	return &reporter.Reporter{
-		GitLab:            gl,
-		Resolver:          resolver,
-		Metrics:           source,
-		ThrottleWarnRatio: cfg.ThrottleWarnRatio,
-		SigningKey:        []byte(cfg.CommandsSigningKey),
-		Log:               log.Named("reporter"),
+		GitLab:             gl,
+		Resolver:           resolver,
+		Metrics:            source,
+		History:            hist,
+		ThrottleWarnRatio:  cfg.ThrottleWarnRatio,
+		DurationDeltaRatio: cfg.CompareDurationDeltaRatio,
+		SigningKey:         []byte(cfg.CommandsSigningKey),
+		Log:                log.Named("reporter"),
 	}, nil
 }
 

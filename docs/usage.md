@@ -51,6 +51,10 @@ startup on missing/invalid required values.
 | `PROMETHEUS_SCRAPE_INTERVAL` | no | `30s` | Prometheus scrape interval; query windows are padded by one interval |
 | `REPORT_LONG_JOB_DURATION` | no | `10m` | Job duration above which `advise` suggests splitting the job |
 | `REPORT_MEMORY_PRESSURE_RATIO` | no | `0.9` | Peak-memory-to-limit ratio above which `advise` warns about OOMKill risk |
+| `REPORT_COMPARE_ENABLED` | no | `true` | Compare pipeline/job durations against the median of recent successful pipelines on other refs |
+| `REPORT_COMPARE_DURATION_DELTA_RATIO` | no | `0.05` | Relative duration change above which the report annotates a delta (e.g. `🔺 +2m 08s (+51%)`) |
+| `REPORT_COMPARE_HISTORY_PIPELINES` | no | `6` | How many recent successful pipelines form the baseline; minimum `3` when enabled |
+| `REPORT_COMPARE_CACHE_TTL` | no | `1h` | How long a computed baseline is cached per project+branch; `0` disables caching |
 | `SERVER_LISTEN_ADDR` | no | `:8080` | Webhook HTTP listener |
 | `SERVER_OPS_ADDR` | no | `:8081` | Ops listener: `/healthz`, `/readyz`, `/metrics` |
 | `LOG_LEVEL` | no | `info` | `debug` \| `info` \| `warn` \| `error` — structured JSON logs (zap) written to stdout; also settable per-invocation with the `--log-level` root flag, which takes precedence |
@@ -242,6 +246,25 @@ mise r dev:gitlab:seed-load-test   # creates a project + MR whose pipeline stres
 ```
 
 Health/ops endpoints are on `:8081`: `/healthz`, `/readyz`, `/metrics`.
+
+### Duration comparison
+
+The report compares this pipeline's wall clock — and each job's duration —
+against the **median of the last `REPORT_COMPARE_HISTORY_PIPELINES` successful
+pipelines of the project**, excluding pipelines on the reported branch (both the
+branch ref and `refs/merge-requests/<iid>/head`). Comparing a branch against its
+own earlier runs would measure iteration noise; excluding it answers the useful
+question, "does this change build slower than other code?".
+
+A delta is shown only when the change exceeds `REPORT_COMPARE_DURATION_DELTA_RATIO`
+and at least 3 baseline pipelines exist, so new projects and newly added jobs
+show plain durations rather than confident-looking noise. When the baseline is
+thin (3–5 pipelines) the report footnotes the actual sample count.
+
+Baselines are cached per project+branch for `REPORT_COMPARE_CACHE_TTL`, so the
+comparison costs roughly one pipeline listing plus one job listing per baseline
+pipeline, once an hour. Set `REPORT_COMPARE_ENABLED=false` to switch the feature
+— and all of its API calls — off.
 
 ### Local checks
 

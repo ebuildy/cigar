@@ -44,6 +44,10 @@ func (f *adviseGitLab) UploadFile(context.Context, int64, string, []byte) (strin
 func (f *adviseGitLab) CreateDiscussionReply(context.Context, int64, int64, string, string) error {
 	return nil
 }
+func (f *adviseGitLab) RecentSuccessfulPipelines(context.Context, int64, int) ([]gitlab.Pipeline, error) {
+	return nil, nil
+}
+func (f *adviseGitLab) PipelineRef(context.Context, int64, int64) (string, error) { return "", nil }
 
 type advisePods struct{ pods map[int64]string }
 

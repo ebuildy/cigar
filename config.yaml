@@ -37,6 +37,16 @@ report:
   long_job_duration: 10m
   # Peak-memory-to-limit ratio above which OOMKill risk is warned.
   memory_pressure_ratio: 0.9
+  # Duration comparison against recent successful pipelines on other refs.
+  compare:
+    # Turn the comparison — and all of its API calls — off with false.
+    enabled: true
+    # Relative duration change above which a delta is annotated.
+    duration_delta_ratio: 0.05
+    # How many recent successful pipelines form the baseline (minimum 3).
+    history_pipelines: 6
+    # How long a computed baseline is cached per project+branch; 0 disables it.
+    cache_ttl: 1h
 
 commands:
   # Interactive report commands (reply "help" / "details ..." to the report).

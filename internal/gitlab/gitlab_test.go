@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -215,5 +216,85 @@ func TestUpsertNote(t *testing.T) {
 				t.Errorf("updated note = %d, want %d", updatedID, tt.wantUpdate)
 			}
 		})
+	}
+}
+
+func TestRecentSuccessfulPipelines(t *testing.T) {
+	var gotQuery string
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v4/projects/7/pipelines", func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		_, _ = fmt.Fprint(w, `[
+			{"id":900,"ref":"main","status":"success"},
+			{"id":899,"ref":"refs/merge-requests/3/head","status":"success"},
+			{"id":898,"ref":"feature-x","status":"success"}
+		]`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c, err := New(srv.URL, "tok", zap.NewNop())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	got, err := c.RecentSuccessfulPipelines(t.Context(), 7, 18)
+	if err != nil {
+		t.Fatalf("RecentSuccessfulPipelines: %v", err)
+	}
+	want := []Pipeline{
+		{ID: 900, Ref: "main"},
+		{ID: 899, Ref: "refs/merge-requests/3/head"},
+		{ID: 898, Ref: "feature-x"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("pipelines = %+v, want %+v", got, want)
+	}
+	if !strings.Contains(gotQuery, "status=success") {
+		t.Errorf("query %q does not filter status=success", gotQuery)
+	}
+	if !strings.Contains(gotQuery, "per_page=18") {
+		t.Errorf("query %q does not request per_page=18", gotQuery)
+	}
+}
+
+func TestRecentSuccessfulPipelinesStopsAtLimit(t *testing.T) {
+	// GitLab may return a full page regardless of per_page; the client must not
+	// hand back more than the caller asked for.
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v4/projects/7/pipelines", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `[
+			{"id":3,"ref":"a","status":"success"},
+			{"id":2,"ref":"b","status":"success"},
+			{"id":1,"ref":"c","status":"success"}
+		]`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c, _ := New(srv.URL, "tok", zap.NewNop())
+	got, err := c.RecentSuccessfulPipelines(t.Context(), 7, 2)
+	if err != nil {
+		t.Fatalf("RecentSuccessfulPipelines: %v", err)
+	}
+	if len(got) != 2 || got[0].ID != 3 || got[1].ID != 2 {
+		t.Errorf("got %+v, want the two newest", got)
+	}
+}
+
+func TestPipelineRef(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v4/projects/7/pipelines/42", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"id":42,"ref":"refs/merge-requests/9/head","status":"success"}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c, _ := New(srv.URL, "tok", zap.NewNop())
+	ref, err := c.PipelineRef(t.Context(), 7, 42)
+	if err != nil {
+		t.Fatalf("PipelineRef: %v", err)
+	}
+	if ref != "refs/merge-requests/9/head" {
+		t.Errorf("ref = %q, want refs/merge-requests/9/head", ref)
 	}
 }

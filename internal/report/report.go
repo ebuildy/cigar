@@ -27,6 +27,21 @@ type JobReport struct {
 	// job never ran (skipped/canceled/manual).
 	StartedAt  time.Time
 	FinishedAt time.Time
+
+	// BaselineDuration is this job's typical duration in recent successful
+	// pipelines on other refs; 0 means no comparable baseline. BaselineSamples
+	// is how many pipelines backed it — below minBaselineSamples no delta is
+	// rendered.
+	BaselineDuration time.Duration
+	BaselineSamples  int
+}
+
+// duration is the job's run time, or 0 when it never ran.
+func (j JobReport) duration() time.Duration {
+	if j.StartedAt.IsZero() || j.FinishedAt.IsZero() {
+		return 0
+	}
+	return j.FinishedAt.Sub(j.StartedAt)
 }
 
 // Data is everything the template needs to render one pipeline report.
@@ -45,6 +60,13 @@ type Data struct {
 	// empty report of zeros.
 	RanJobs int
 
+	// BaselinePipelineDuration/Samples are the same comparison for the pipeline
+	// as a whole (0 = no baseline). DurationDeltaRatio is the relative change
+	// above which a delta is shown at all.
+	BaselinePipelineDuration time.Duration
+	BaselinePipelineSamples  int
+	DurationDeltaRatio       float64
+
 	// NoteMarker, when non-empty, is written at the top of the body instead of
 	// the plain Marker. serve sets it to a SignedMarker; `bot run` leaves it
 	// empty (no signing key, no commands).
@@ -59,6 +81,17 @@ func (d Data) hasUsage() bool {
 		}
 	}
 	return false
+}
+
+// baselineFootnote names the sample count when the baseline is thin (fewer than
+// fullBaselineSamples), so a median backed by a handful of runs is not
+// over-trusted. A full or absent baseline gets no footnote.
+func (d Data) baselineFootnote() string {
+	n := d.BaselinePipelineSamples
+	if n < minBaselineSamples || n >= fullBaselineSamples {
+		return ""
+	}
+	return fmt.Sprintf("_Duration deltas vs the median of %d recent successful pipelines on other refs._", n)
 }
 
 // totals aggregates resource usage across every job that has usage data.
@@ -137,7 +170,8 @@ func Render(d Data) (string, error) {
 	b.WriteString("### Summary\n\n")
 	b.WriteString("| Resource | Total |\n|---|---|\n")
 	if dur, ok := d.wallClock(); ok {
-		fmt.Fprintf(&b, "| Pipeline duration | %s |\n", humanDuration(dur))
+		fmt.Fprintf(&b, "| Pipeline duration | %s |\n",
+			durationCell(dur, d.BaselinePipelineDuration, d.BaselinePipelineSamples, d.DurationDeltaRatio))
 	}
 	fmt.Fprintf(&b, "| CPU time | %s |\n", cpuTime(t.CPUSeconds))
 	fmt.Fprintf(&b, "| Total memory (sum of peaks) | %s |\n", humanBytes(t.TotalMemBytes))
@@ -148,10 +182,13 @@ func Render(d Data) (string, error) {
 	fmt.Fprintf(&b, "| Disk write | %s |\n", humanBytes(t.DiskWriteBytes))
 
 	b.WriteString("\n### Details\n\n")
-	b.WriteString("| Stage : Job | CPU time | Peak memory | Mem req / limit | CPU req / limit | Throttled | Network RX / TX | Disk R / W |\n")
-	b.WriteString("|---|---|---|---|---|---|---|---|\n")
+	b.WriteString("| Stage : Job | Duration | CPU time | Peak memory | Mem req / limit | CPU req / limit | Throttled | Network RX / TX | Disk R / W |\n")
+	b.WriteString("|---|---|---|---|---|---|---|---|---|\n")
 	for _, j := range d.Jobs {
-		row(&b, j, d.ThrottleWarnRatio)
+		row(&b, j, d.ThrottleWarnRatio, d.DurationDeltaRatio)
+	}
+	if note := d.baselineFootnote(); note != "" {
+		b.WriteString("\n" + note + "\n")
 	}
 
 	return b.String(), nil
@@ -159,15 +196,17 @@ func Render(d Data) (string, error) {
 
 // row renders one job's detail row. A nil Usage job is marked unavailable
 // rather than shown with fabricated zeros.
-func row(b *strings.Builder, j JobReport, warnRatio float64) {
+func row(b *strings.Builder, j JobReport, warnRatio, deltaRatio float64) {
 	name := fmt.Sprintf("%s : %s", j.Stage, j.Name)
+	dur := durationCell(j.duration(), j.BaselineDuration, j.BaselineSamples, deltaRatio)
 	if j.Usage == nil {
-		fmt.Fprintf(b, "| %s | _no data_ | | | | | | |\n", name)
+		fmt.Fprintf(b, "| %s | %s | _no data_ | | | | | | |\n", name, dur)
 		return
 	}
 	u := j.Usage
-	fmt.Fprintf(b, "| %s | %s | %s | %s / %s | %s / %s | %s | %s / %s | %s / %s |\n",
+	fmt.Fprintf(b, "| %s | %s | %s | %s | %s / %s | %s / %s | %s | %s / %s | %s / %s |\n",
 		name,
+		dur,
 		cpuTime(u.CPUSeconds),
 		humanBytes(u.PeakMemoryBytes),
 		optBytes(u.MemoryRequestBytes), optBytes(u.MemoryLimitBytes),

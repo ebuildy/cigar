@@ -3,6 +3,7 @@ package reporter
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"go.uber.org/zap"
 
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/gitlab"
+	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/history"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/metrics"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/report"
 )
@@ -56,6 +58,10 @@ func (f *fakeGitLab) UploadFile(context.Context, int64, string, []byte) (string,
 func (f *fakeGitLab) CreateDiscussionReply(context.Context, int64, int64, string, string) error {
 	return nil
 }
+func (f *fakeGitLab) RecentSuccessfulPipelines(context.Context, int64, int) ([]gitlab.Pipeline, error) {
+	return nil, nil
+}
+func (f *fakeGitLab) PipelineRef(context.Context, int64, int64) (string, error) { return "", nil }
 
 type fakeResolver struct {
 	pods map[int64]string // job ID -> pod name
@@ -182,7 +188,7 @@ func TestBuildMapsStageAndName(t *testing.T) {
 		Metrics:  &fakeSource{},
 		Log:      zap.NewNop(),
 	}
-	data, err := r.Build(t.Context(), 7, 42)
+	data, err := r.Build(t.Context(), 7, 42, nil)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -207,7 +213,7 @@ func TestBuildCountsRanJobs(t *testing.T) {
 		Metrics:  &fakeSource{},
 		Log:      zap.NewNop(),
 	}
-	data, err := r.Build(t.Context(), 7, 42)
+	data, err := r.Build(t.Context(), 7, 42, nil)
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -280,7 +286,7 @@ func TestBuild(t *testing.T) {
 				ThrottleWarnRatio: 0.25,
 				Log:               zap.NewNop(),
 			}
-			data, err := r.Build(t.Context(), 7, 42)
+			data, err := r.Build(t.Context(), 7, 42, nil)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("Build succeeded, want error")
@@ -302,5 +308,121 @@ func TestBuild(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+type fakeHistory struct {
+	baseline    history.Baseline
+	err         error
+	gotProject  int64
+	gotExcludes []string
+	calls       int
+}
+
+func (f *fakeHistory) Baseline(_ context.Context, projectID int64, excludeRefs []string) (history.Baseline, error) {
+	f.calls++
+	f.gotProject = projectID
+	f.gotExcludes = excludeRefs
+	return f.baseline, f.err
+}
+
+func TestBuildAppliesBaseline(t *testing.T) {
+	base := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
+	gl := &fakeGitLab{jobs: []gitlab.Job{
+		{ID: 1, Stage: "build", Name: "compile", StartedAt: base, FinishedAt: base.Add(3 * time.Minute)},
+		{ID: 2, Stage: "test", Name: "new-job", StartedAt: base, FinishedAt: base.Add(time.Minute)},
+	}}
+	hist := &fakeHistory{baseline: history.Baseline{
+		Pipeline: history.Stat{Median: 2 * time.Minute, Samples: 5},
+		Jobs: map[history.JobKey]history.Stat{
+			{Stage: "build", Name: "compile"}: {Median: 90 * time.Second, Samples: 5},
+		},
+	}}
+	r := &Reporter{
+		GitLab:             gl,
+		Resolver:           &fakeResolver{},
+		Metrics:            &fakeSource{},
+		History:            hist,
+		DurationDeltaRatio: 0.05,
+		Log:                zap.NewNop(),
+	}
+
+	data, err := r.Build(t.Context(), 7, 42, []string{"feature-x", "refs/merge-requests/3/head"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if data.BaselinePipelineDuration != 2*time.Minute || data.BaselinePipelineSamples != 5 {
+		t.Errorf("pipeline baseline = %s/%d, want 2m/5",
+			data.BaselinePipelineDuration, data.BaselinePipelineSamples)
+	}
+	if data.DurationDeltaRatio != 0.05 {
+		t.Errorf("DurationDeltaRatio = %v, want 0.05", data.DurationDeltaRatio)
+	}
+	if got := data.Jobs[0].BaselineDuration; got != 90*time.Second {
+		t.Errorf("compile baseline = %s, want 1m30s", got)
+	}
+	if got := data.Jobs[1].BaselineSamples; got != 0 {
+		t.Errorf("a job absent from the baseline must have 0 samples, got %d", got)
+	}
+	if want := []string{"feature-x", "refs/merge-requests/3/head"}; !reflect.DeepEqual(hist.gotExcludes, want) {
+		t.Errorf("excludeRefs = %v, want %v", hist.gotExcludes, want)
+	}
+	if hist.gotProject != 7 {
+		t.Errorf("project = %d, want 7", hist.gotProject)
+	}
+}
+
+func TestBuildSurvivesBaselineFailure(t *testing.T) {
+	base := time.Date(2026, 7, 25, 10, 0, 0, 0, time.UTC)
+	gl := &fakeGitLab{jobs: []gitlab.Job{
+		{ID: 1, Stage: "build", Name: "compile", StartedAt: base, FinishedAt: base.Add(time.Minute)},
+	}}
+	r := &Reporter{
+		GitLab:   gl,
+		Resolver: &fakeResolver{},
+		Metrics:  &fakeSource{},
+		History:  &fakeHistory{err: errors.New("gitlab down")},
+		Log:      zap.NewNop(),
+	}
+
+	data, err := r.Build(t.Context(), 7, 42, []string{"feature-x"})
+	if err != nil {
+		t.Fatalf("Build must not fail when the baseline fails: %v", err)
+	}
+	if len(data.Jobs) != 1 {
+		t.Fatalf("jobs = %d, want 1", len(data.Jobs))
+	}
+	if data.BaselinePipelineSamples != 0 || data.Jobs[0].BaselineSamples != 0 {
+		t.Error("a failed baseline must leave every baseline field zero")
+	}
+}
+
+func TestBuildWithoutHistorySourceSkipsComparison(t *testing.T) {
+	gl := &fakeGitLab{jobs: []gitlab.Job{{ID: 1, Stage: "build", Name: "compile"}}}
+	r := &Reporter{GitLab: gl, Resolver: &fakeResolver{}, Metrics: &fakeSource{}, Log: zap.NewNop()}
+
+	data, err := r.Build(t.Context(), 7, 42, []string{"feature-x"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if data.BaselinePipelineSamples != 0 {
+		t.Error("a nil History must produce no baseline")
+	}
+}
+
+func TestProcessPipelineExcludesBothRefForms(t *testing.T) {
+	gl := &fakeGitLab{jobs: []gitlab.Job{{ID: 1, Stage: "build", Name: "compile"}}}
+	hist := &fakeHistory{}
+	r := &Reporter{
+		GitLab: gl, Resolver: &fakeResolver{}, Metrics: &fakeSource{},
+		History: hist, Log: zap.NewNop(),
+	}
+
+	if _, err := r.ProcessPipeline(t.Context(), 7, 42, 3, "feature-x", "success"); err != nil {
+		t.Fatalf("ProcessPipeline: %v", err)
+	}
+	want := []string{"feature-x", "refs/merge-requests/3/head"}
+	if !reflect.DeepEqual(hist.gotExcludes, want) {
+		t.Errorf("excludeRefs = %v, want %v", hist.gotExcludes, want)
 	}
 }

@@ -56,6 +56,10 @@ func TestNameDerivation(t *testing.T) {
 		{"pod_resolver", "POD_RESOLVER", "pod-resolver"},
 		{"webhook.auth_method", "WEBHOOK_AUTH_METHOD", "webhook-auth-method"},
 		{"report.throttle_warn_ratio", "REPORT_THROTTLE_WARN_RATIO", "report-throttle-warn-ratio"},
+		{"report.compare.enabled", "REPORT_COMPARE_ENABLED", "report-compare-enabled"},
+		{"report.compare.duration_delta_ratio", "REPORT_COMPARE_DURATION_DELTA_RATIO", "report-compare-duration-delta-ratio"},
+		{"report.compare.history_pipelines", "REPORT_COMPARE_HISTORY_PIPELINES", "report-compare-history-pipelines"},
+		{"report.compare.cache_ttl", "REPORT_COMPARE_CACHE_TTL", "report-compare-cache-ttl"},
 		{"log.level", "LOG_LEVEL", "log-level"},
 	}
 	for _, c := range cases {
@@ -72,7 +76,9 @@ func TestSettingsCoverAllKeys(t *testing.T) {
 	want := []string{
 		"gitlab.url", "prometheus.url", "prometheus.scrape_interval", "pod_resolver",
 		"webhook.auth_method", "report.throttle_warn_ratio", "report.long_job_duration",
-		"report.memory_pressure_ratio", "commands.enabled", "commands.chart_format",
+		"report.memory_pressure_ratio", "report.compare.enabled",
+		"report.compare.duration_delta_ratio", "report.compare.history_pipelines",
+		"report.compare.cache_ttl", "commands.enabled", "commands.chart_format",
 		"server.listen_addr", "server.ops_addr", "log.level",
 	}
 	got := map[string]bool{}
@@ -317,6 +323,70 @@ func TestLoadAdviceThresholds(t *testing.T) {
 		}
 		if cfg.ThrottleWarnRatio != 0 {
 			t.Errorf("ThrottleWarnRatio = %v, want 0", cfg.ThrottleWarnRatio)
+		}
+	})
+}
+
+func TestLoadCompareDefaults(t *testing.T) {
+	t.Setenv("GITLAB_TOKEN", "tok")
+	t.Setenv("PROMETHEUS_URL", "http://prom:9090")
+
+	cfg, err := loadEnv(t)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.CompareEnabled {
+		t.Error("CompareEnabled should default to true")
+	}
+	if cfg.CompareDurationDeltaRatio != 0.05 {
+		t.Errorf("CompareDurationDeltaRatio = %v, want 0.05", cfg.CompareDurationDeltaRatio)
+	}
+	if cfg.CompareHistoryPipelines != 6 {
+		t.Errorf("CompareHistoryPipelines = %d, want 6", cfg.CompareHistoryPipelines)
+	}
+	if cfg.CompareCacheTTL != time.Hour {
+		t.Errorf("CompareCacheTTL = %s, want 1h", cfg.CompareCacheTTL)
+	}
+}
+
+func TestLoadCompareValidation(t *testing.T) {
+	t.Setenv("GITLAB_TOKEN", "tok")
+	t.Setenv("PROMETHEUS_URL", "http://prom:9090")
+
+	t.Run("too few baseline pipelines is rejected", func(t *testing.T) {
+		t.Setenv("REPORT_COMPARE_HISTORY_PIPELINES", "2")
+		if _, err := loadEnv(t); err == nil {
+			t.Fatal("want an error for a baseline smaller than 3")
+		}
+	})
+
+	t.Run("the same value is fine when comparison is off", func(t *testing.T) {
+		t.Setenv("REPORT_COMPARE_HISTORY_PIPELINES", "2")
+		t.Setenv("REPORT_COMPARE_ENABLED", "false")
+		cfg, err := loadEnv(t)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.CompareEnabled {
+			t.Error("CompareEnabled should be false")
+		}
+	})
+
+	t.Run("a zero cache TTL is accepted", func(t *testing.T) {
+		t.Setenv("REPORT_COMPARE_CACHE_TTL", "0s")
+		cfg, err := loadEnv(t)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.CompareCacheTTL != 0 {
+			t.Errorf("CompareCacheTTL = %s, want 0", cfg.CompareCacheTTL)
+		}
+	})
+
+	t.Run("a non-numeric pipeline count is rejected", func(t *testing.T) {
+		t.Setenv("REPORT_COMPARE_HISTORY_PIPELINES", "many")
+		if _, err := loadEnv(t); err == nil {
+			t.Fatal("want an error for a non-numeric pipeline count")
 		}
 	})
 }
