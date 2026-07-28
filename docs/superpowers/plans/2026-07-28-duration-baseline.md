@@ -1956,7 +1956,7 @@ git commit -m "feat(cmd): wire the duration baseline into serve and run"
 **Files:**
 - Modify: `internal/e2e/e2e_test.go`
 
-- [ ] **Step 1: Serve the baseline endpoints from the mock**
+- [x] **Step 1: Serve the baseline endpoints from the mock**
 
 In `mockGitLab.server`, add before the catch-all `"/"` handler. Note `branchRef` is `"feature-x"` and `mrIID` already exist as constants in this file:
 
@@ -1992,7 +1992,7 @@ In `mockGitLab.server`, add before the catch-all `"/"` handler. Note `branchRef`
 	}
 ```
 
-- [ ] **Step 2: Wire the Fetcher into the harness**
+- [x] **Step 2: Wire the Fetcher into the harness**
 
 In `harness`, extend the `reporter.Reporter` literal:
 
@@ -2015,7 +2015,7 @@ In `harness`, extend the `reporter.Reporter` literal:
 
 Add `"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/history"` to the imports.
 
-- [ ] **Step 3: Write the failing assertion test**
+- [x] **Step 3: Write the failing assertion test**
 
 Add a new test to `internal/e2e/e2e_test.go`, using this file's existing `postWebhook` + `waitFor` helpers (the same shape as `TestWebhookToMRNote`):
 
@@ -2062,12 +2062,12 @@ func TestPipelineReportComparesDuration(t *testing.T) {
 
 The baseline job listings carry no `stage` field, exactly like the reported pipeline's job, so both sides key on `JobKey{Stage: "", Name: "build"}` and the per-job delta matches the pipeline one.
 
-- [ ] **Step 4: Run the e2e suite**
+- [x] **Step 4: Run the e2e suite**
 
 Run: `mise r test:e2e`
 Expected: PASS. If the median or percentage differs, print `body` and recompute from the mock's numbers — the mock's reported job window is `-10m` to `-5m`, i.e. 5 minutes, so adjust the expected delta rather than the implementation if the fixture changed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/e2e
