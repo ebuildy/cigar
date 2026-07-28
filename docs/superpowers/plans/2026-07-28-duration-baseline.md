@@ -1859,7 +1859,7 @@ git commit -m "feat(config): add the report.compare settings group"
 - Modify: `cmd/bot/deps.go`
 - Modify: `cmd/bot/run.go`
 
-- [ ] **Step 1: Build the Fetcher in newReporter**
+- [x] **Step 1: Build the Fetcher in newReporter**
 
 In `cmd/bot/deps.go`, import `"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/history"` and, inside `newReporter` just before the `return`:
 
@@ -1894,7 +1894,7 @@ and extend the returned struct:
 
 `history` must be a **new** logger name so its warnings land under `name=history` in `cigar_log_total` rather than in the reporter's bucket.
 
-- [ ] **Step 2: Resolve the ref in `bot run`**
+- [x] **Step 2: Resolve the ref in `bot run`**
 
 In `cmd/bot/run.go`, replace the `rep.Build(...)` call site:
 
@@ -1917,7 +1917,7 @@ In `cmd/bot/run.go`, replace the `rep.Build(...)` call site:
 			}
 ```
 
-- [ ] **Step 3: Add the delta ratio to the single-job path**
+- [x] **Step 3: Add the delta ratio to the single-job path**
 
 In `printJobDetails`, the one-job `report.Data` literal has no baseline (a single job's comparison is the report's job, not this debug view), but it must still carry the ratio so the shared renderer behaves consistently:
 
@@ -1932,17 +1932,17 @@ In `printJobDetails`, the one-job `report.Data` literal has no baseline (a singl
 		}
 ```
 
-- [ ] **Step 4: Build and run everything**
+- [x] **Step 4: Build and run everything**
 
 Run: `mise r build && mise r test`
 Expected: build succeeds, all tests PASS.
 
-- [ ] **Step 5: Verify the binary's flags exist**
+- [x] **Step 5: Verify the binary's flags exist**
 
 Run: `./bot serve --help | grep report-compare`
 Expected: four lines — `--report-compare-enabled`, `--report-compare-duration-delta-ratio`, `--report-compare-history-pipelines`, `--report-compare-cache-ttl`. (Adjust the binary path to whatever `mise r build` produced.)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add cmd/bot

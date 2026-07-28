@@ -50,7 +50,19 @@ func newRunCmd() *cobra.Command {
 			log.Debug("building report",
 				zap.Int64("project_id", projectID),
 				zap.Int64("pipeline_id", pipelineID))
-			data, err := rep.Build(cmd.Context(), projectID, pipelineID, nil)
+			// `bot run` has no webhook payload, so ask GitLab which ref this
+			// pipeline ran on — the baseline must not include the branch itself.
+			var excludeRefs []string
+			if cfg.CompareEnabled {
+				ref, err := rep.GitLab.PipelineRef(cmd.Context(), projectID, pipelineID)
+				if err != nil {
+					log.Warn("could not resolve the pipeline ref; the duration baseline may include this branch",
+						zap.Int64("pipeline_id", pipelineID), zap.Error(err))
+				} else {
+					excludeRefs = []string{ref}
+				}
+			}
+			data, err := rep.Build(cmd.Context(), projectID, pipelineID, excludeRefs)
 			if err != nil {
 				return err
 			}
@@ -107,11 +119,12 @@ func printJobDetails(cmd *cobra.Command, rep *reporter.Reporter, cfg *config.Con
 	// Numeric usage via the shared report renderer (one-job report). A nil usage
 	// makes Render emit its "no resource data" notice rather than fake zeros.
 	data := report.Data{
-		PipelineID:        pipelineID,
-		Status:            "job: " + j.Name,
-		Jobs:              []report.JobReport{{Stage: j.Stage, Name: j.Name, Usage: usage}},
-		ThrottleWarnRatio: cfg.ThrottleWarnRatio,
-		RanJobs:           1,
+		PipelineID:         pipelineID,
+		Status:             "job: " + j.Name,
+		Jobs:               []report.JobReport{{Stage: j.Stage, Name: j.Name, Usage: usage}},
+		ThrottleWarnRatio:  cfg.ThrottleWarnRatio,
+		DurationDeltaRatio: cfg.CompareDurationDeltaRatio,
+		RanJobs:            1,
 	}
 	body, err := report.Render(data)
 	if err != nil {
