@@ -1041,7 +1041,7 @@ git commit -m "feat(history): TTL-cached baseline fetcher over the GitLab API"
 - Test: `internal/report/report_test.go`
 - Modify: `internal/report/testdata/report.md` (regenerated)
 
-- [ ] **Step 1: Write the failing formatting tests**
+- [x] **Step 1: Write the failing formatting tests**
 
 Append to `internal/report/report_test.go`:
 
@@ -1092,12 +1092,12 @@ func TestDurationCellZeroRatioShowsEveryChange(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `go test -race ./internal/report/ -run TestDurationCell -v`
 Expected: FAIL — `durationCell` undefined.
 
-- [ ] **Step 3: Write the formatter**
+- [x] **Step 3: Write the formatter**
 
 Create `internal/report/duration.go`:
 
@@ -1149,12 +1149,12 @@ func deltaSuffix(current, baseline time.Duration, samples int, warnRatio float64
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `go test -race ./internal/report/ -run TestDurationCell -v`
 Expected: PASS (both tests, all subtests).
 
-- [ ] **Step 5: Commit the formatter**
+- [x] **Step 5: Commit the formatter**
 
 ```bash
 git add internal/report/duration.go internal/report/report_test.go

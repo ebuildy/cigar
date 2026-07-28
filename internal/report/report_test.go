@@ -379,3 +379,48 @@ func TestRenderDefaultsToPlainMarker(t *testing.T) {
 		t.Fatalf("body missing plain Marker:\n%s", body)
 	}
 }
+
+func TestDurationCell(t *testing.T) {
+	const ratio = 0.05
+	tests := []struct {
+		name     string
+		current  time.Duration
+		baseline time.Duration
+		samples  int
+		want     string
+	}{
+		{"no baseline prints the duration alone",
+			4 * time.Minute, 0, 0, "4m 00s"},
+		{"below minimum samples prints no delta",
+			4 * time.Minute, 2 * time.Minute, 2, "4m 00s"},
+		{"within the threshold prints no delta",
+			// 4m02s vs 4m median = +0.8%, under 5%.
+			4*time.Minute + 2*time.Second, 4 * time.Minute, 6, "4m 02s"},
+		{"slower beyond the threshold",
+			// 6m20s vs 4m12s = +2m08s, +50.79% -> +51%.
+			6*time.Minute + 20*time.Second, 4*time.Minute + 12*time.Second, 6,
+			"6m 20s 🔺 +2m 08s (+51%)"},
+		{"faster beyond the threshold",
+			40 * time.Second, 55 * time.Second, 6, "40s 🔻 −15s (−27%)"},
+		{"zero current duration prints an em dash",
+			0, 4 * time.Minute, 6, "—"},
+		{"zero baseline never divides",
+			4 * time.Minute, 0, 6, "4m 00s"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := durationCell(tt.current, tt.baseline, tt.samples, ratio)
+			if got != tt.want {
+				t.Errorf("durationCell = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDurationCellZeroRatioShowsEveryChange(t *testing.T) {
+	// A 0 threshold means "annotate any measurable change".
+	got := durationCell(4*time.Minute+1*time.Second, 4*time.Minute, 6, 0)
+	if !strings.Contains(got, "🔺") {
+		t.Errorf("durationCell = %q, want a slower marker", got)
+	}
+}
