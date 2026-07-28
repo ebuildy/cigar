@@ -35,6 +35,10 @@ var settings = []setting{
 	{"report.throttle_warn_ratio", "0.25", "Throttled-periods ratio above which a job gets a warning"},
 	{"report.long_job_duration", "10m", "Job duration above which advice suggests splitting the job"},
 	{"report.memory_pressure_ratio", "0.9", "Peak-memory-to-limit ratio above which OOMKill risk is warned"},
+	{"report.compare.enabled", "true", "Compare pipeline/job durations against recent successful pipelines"},
+	{"report.compare.duration_delta_ratio", "0.05", "Relative duration change above which the report annotates a delta"},
+	{"report.compare.history_pipelines", "6", "How many recent successful pipelines form the duration baseline (minimum 3)"},
+	{"report.compare.cache_ttl", "1h", "How long a computed duration baseline is cached; 0 disables caching"},
 	{"commands.enabled", "false", "Enable interactive report commands"},
 	{"commands.chart_format", "png", "Chart format for command replies: png, svg or markdown"},
 	{"server.listen_addr", ":8080", "Webhook listen address"},
@@ -69,6 +73,11 @@ type Config struct {
 	CommandsEnabled     bool
 	CommandsSigningKey  string
 	ChartFormat         string
+
+	CompareEnabled            bool
+	CompareDurationDeltaRatio float64
+	CompareHistoryPipelines   int
+	CompareCacheTTL           time.Duration
 }
 
 // New returns an env-only viper: defaults set and each key bound to its env var.
@@ -171,6 +180,18 @@ func Load(v *viper.Viper) (*Config, error) {
 	if cfg.CommandsEnabled, err = parseBool(v.GetString("commands.enabled"), "COMMANDS_ENABLED"); err != nil {
 		return nil, err
 	}
+	if cfg.CompareEnabled, err = parseBool(v.GetString("report.compare.enabled"), "REPORT_COMPARE_ENABLED"); err != nil {
+		return nil, err
+	}
+	if cfg.CompareDurationDeltaRatio, err = parseRatio(v.GetString("report.compare.duration_delta_ratio"), "REPORT_COMPARE_DURATION_DELTA_RATIO", true); err != nil {
+		return nil, err
+	}
+	if cfg.CompareHistoryPipelines, err = parseCount(v.GetString("report.compare.history_pipelines"), "REPORT_COMPARE_HISTORY_PIPELINES"); err != nil {
+		return nil, err
+	}
+	if cfg.CompareCacheTTL, err = parseNonNegativeDuration(v.GetString("report.compare.cache_ttl"), "REPORT_COMPARE_CACHE_TTL"); err != nil {
+		return nil, err
+	}
 
 	if !validAuthMethods[cfg.AuthMethod] {
 		return nil, fmt.Errorf("WEBHOOK_AUTH_METHOD must be one of secret, signing_token, got %q", cfg.AuthMethod)
@@ -180,6 +201,12 @@ func Load(v *viper.Viper) (*Config, error) {
 	}
 	if !validChartFormats[cfg.ChartFormat] {
 		return nil, fmt.Errorf("COMMANDS_CHART_FORMAT must be one of png, svg, markdown, got %q", cfg.ChartFormat)
+	}
+	// A baseline smaller than the minimum sample count could never produce a
+	// comparison, so reject it rather than silently rendering nothing.
+	if cfg.CompareEnabled && cfg.CompareHistoryPipelines < minBaselinePipelines {
+		return nil, fmt.Errorf("REPORT_COMPARE_HISTORY_PIPELINES must be at least %d, got %d",
+			minBaselinePipelines, cfg.CompareHistoryPipelines)
 	}
 	for name, val := range map[string]string{
 		"GITLAB_TOKEN":   cfg.GitLabToken,
@@ -217,6 +244,27 @@ func parseRatio(raw, label string, allowZero bool) (float64, error) {
 		return 0, fmt.Errorf("%s must be a float in %s, got %q", label, rng, raw)
 	}
 	return r, nil
+}
+
+// minBaselinePipelines mirrors history's minimum sample count.
+const minBaselinePipelines = 3
+
+func parseCount(raw, label string) (int, error) {
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative integer, got %q", label, raw)
+	}
+	return n, nil
+}
+
+// parseNonNegativeDuration accepts 0 (used to disable a timer), unlike
+// parseDuration which requires a positive value.
+func parseNonNegativeDuration(raw, label string) (time.Duration, error) {
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative duration, got %q", label, raw)
+	}
+	return d, nil
 }
 
 func parseDuration(raw, label string) (time.Duration, error) {

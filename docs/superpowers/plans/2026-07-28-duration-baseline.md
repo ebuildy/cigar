@@ -1678,7 +1678,7 @@ git commit -m "feat(reporter): compare pipeline and job durations to a baseline"
 - Modify: `internal/config/config.go`
 - Test: `internal/config/config_test.go`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `internal/config/config_test.go` (match the file's existing helpers — it already has `newTestRoot`/`writeConfig` and a settings-table test listing every key; extend that list rather than duplicating it):
 
@@ -1757,12 +1757,12 @@ Also extend the existing key lists in `config_test.go` (around the `{"report.thr
 		{"report.compare.cache_ttl", "REPORT_COMPARE_CACHE_TTL", "report-compare-cache-ttl"},
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `go test -race ./internal/config/ -v`
 Expected: FAIL — unknown fields `CompareEnabled` etc., and the settings-table test reports the four keys missing.
 
-- [ ] **Step 3: Add the settings**
+- [x] **Step 3: Add the settings**
 
 In `internal/config/config.go`, add to the `settings` slice after the existing `report.*` entries:
 
@@ -1773,7 +1773,7 @@ In `internal/config/config.go`, add to the `settings` slice after the existing `
 	{"report.compare.cache_ttl", "1h", "How long a computed duration baseline is cached; 0 disables caching"},
 ```
 
-- [ ] **Step 4: Add the Config fields**
+- [x] **Step 4: Add the Config fields**
 
 In the `Config` struct:
 
@@ -1784,7 +1784,7 @@ In the `Config` struct:
 	CompareCacheTTL           time.Duration
 ```
 
-- [ ] **Step 5: Parse and validate in Load**
+- [x] **Step 5: Parse and validate in Load**
 
 In `Load`, after the `CommandsEnabled` block:
 
@@ -1839,12 +1839,12 @@ func parseNonNegativeDuration(raw, label string) (time.Duration, error) {
 }
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `go test -race ./internal/config/ -v`
 Expected: PASS, all tests.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add internal/config
