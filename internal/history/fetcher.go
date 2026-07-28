@@ -1,8 +1,13 @@
 package history
 
 import (
+	"context"
+	"fmt"
 	"slices"
+	"sync"
 	"time"
+
+	"go.uber.org/zap"
 
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/gitlab"
 )
@@ -90,4 +95,71 @@ func reduce(pipelines [][]gitlab.Job) Baseline {
 		}
 	}
 	return b
+}
+
+// Fetcher implements Source against the GitLab API, caching each reduced
+// baseline for TTL. Fetches are sequential: this runs in the async worker, the
+// cost is hourly per project-branch, and sequential is gentle on GitLab's rate
+// limits.
+type Fetcher struct {
+	GitLab    gitlab.Client
+	Pipelines int           // sample size; validated >= minSamples at config load
+	TTL       time.Duration // cache entry lifetime; 0 disables caching
+	Log       *zap.Logger   // named "history"
+
+	// now is injectable for tests; nil means time.Now.
+	now func() time.Time
+
+	once  sync.Once
+	cache *cache
+}
+
+func (f *Fetcher) clock() time.Time {
+	if f.now != nil {
+		return f.now()
+	}
+	return time.Now()
+}
+
+func (f *Fetcher) init() {
+	f.once.Do(func() { f.cache = newCache(f.TTL, defaultCacheCap) })
+}
+
+// Baseline implements Source.
+func (f *Fetcher) Baseline(ctx context.Context, projectID int64, excludeRefs []string) (Baseline, error) {
+	f.init()
+	var primary string
+	if len(excludeRefs) > 0 {
+		primary = excludeRefs[0]
+	}
+	key := cacheKey{projectID: projectID, ref: primary}
+	now := f.clock()
+	if b, ok := f.cache.get(key, now); ok {
+		f.Log.Debug("baseline cache hit",
+			zap.Int64("project_id", projectID), zap.String("ref", primary))
+		return b, nil
+	}
+
+	all, err := f.GitLab.RecentSuccessfulPipelines(ctx, projectID, f.Pipelines*scanFactor)
+	if err != nil {
+		return Baseline{}, fmt.Errorf("list baseline pipelines: %w", err)
+	}
+	samples := selectSamples(all, excludeRefs, f.Pipelines)
+	listings := make([][]gitlab.Job, 0, len(samples))
+	for _, p := range samples {
+		jobs, err := f.GitLab.PipelineJobs(ctx, projectID, p.ID)
+		if err != nil {
+			return Baseline{}, fmt.Errorf("list jobs of baseline pipeline %d: %w", p.ID, err)
+		}
+		listings = append(listings, jobs)
+	}
+	b := reduce(listings)
+	f.cache.put(key, b, now)
+	f.Log.Debug("baseline computed",
+		zap.Int64("project_id", projectID),
+		zap.String("ref", primary),
+		zap.Int("scanned", len(all)),
+		zap.Int("samples", len(samples)),
+		zap.Duration("pipeline_median", b.Pipeline.Median))
+	return b, nil
 }

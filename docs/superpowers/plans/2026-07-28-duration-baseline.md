@@ -646,7 +646,7 @@ git commit -m "feat(history): reduce sample pipelines to median durations"
 - Create: `internal/history/cache.go`
 - Create: `internal/history/cache_test.go`
 
-- [ ] **Step 1: Write the failing cache test**
+- [x] **Step 1: Write the failing cache test**
 
 Create `internal/history/cache_test.go`:
 
@@ -846,12 +846,12 @@ func TestCacheEvictsOldestAtCap(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `go test -race ./internal/history/ -run 'TestFetcher|TestCache' -v`
 Expected: FAIL — `Fetcher`, `newCache`, `cacheKey` undefined.
 
-- [ ] **Step 3: Write the cache**
+- [x] **Step 3: Write the cache**
 
 Create `internal/history/cache.go`:
 
@@ -941,7 +941,7 @@ func (c *cache) evictOldestLocked() {
 }
 ```
 
-- [ ] **Step 4: Write the Fetcher**
+- [x] **Step 4: Write the Fetcher**
 
 Append to `internal/history/fetcher.go` (and extend its imports with `context`, `fmt`, `sync`, `go.uber.org/zap`):
 
@@ -1014,17 +1014,17 @@ func (f *Fetcher) Baseline(ctx context.Context, projectID int64, excludeRefs []s
 }
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `go test -race ./internal/history/ -v`
 Expected: PASS, every test in the package.
 
-- [ ] **Step 6: Lint**
+- [x] **Step 6: Lint**
 
 Run: `mise r lint`
 Expected: clean. (`golangci-lint` may object to the unused embedded `gitlab.Client` field pattern in the test stub — if so, replace the embedding with explicit no-op stubs for the remaining interface methods, mirroring `internal/reporter/reporter_test.go`'s `fakeGitLab`.)
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add internal/history
