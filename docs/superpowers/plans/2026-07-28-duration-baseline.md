@@ -1425,7 +1425,7 @@ git commit -m "feat(report): add a duration column with baseline deltas"
 - Modify: `internal/reporter/reporter.go`
 - Test: `internal/reporter/reporter_test.go`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `internal/reporter/reporter_test.go`:
 
@@ -1546,12 +1546,12 @@ func TestProcessPipelineExcludesBothRefForms(t *testing.T) {
 
 Add `reflect` and the `history` package to the test file's imports.
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `go test -race ./internal/reporter/ -v`
 Expected: FAIL — unknown fields `History`, `DurationDeltaRatio`, and `Build` takes 3 args not 4.
 
-- [ ] **Step 3: Extend the Reporter struct**
+- [x] **Step 3: Extend the Reporter struct**
 
 In `internal/reporter/reporter.go`, add to the imports `"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/history"` and to the struct:
 
@@ -1565,7 +1565,7 @@ In `internal/reporter/reporter.go`, add to the imports `"gitlab.com/ebuildy/gitl
 	DurationDeltaRatio float64
 ```
 
-- [ ] **Step 4: Take excludeRefs in Build and apply the baseline**
+- [x] **Step 4: Take excludeRefs in Build and apply the baseline**
 
 Change the signature and body in `internal/reporter/reporter.go`:
 
@@ -1627,7 +1627,7 @@ func (r *Reporter) baseline(ctx context.Context, projectID int64, excludeRefs []
 }
 ```
 
-- [ ] **Step 5: Pass both ref forms from ProcessPipeline**
+- [x] **Step 5: Pass both ref forms from ProcessPipeline**
 
 In `ProcessPipeline`, replace the `r.Build(ctx, projectID, pipelineID)` call with:
 
@@ -1658,12 +1658,12 @@ func pipelineRefs(ref string, mrIID int64) []string {
 
 Note the ordering: `ref` first, because `history.Fetcher` uses the first entry as its cache key.
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `go test -race ./internal/reporter/ -v`
 Expected: PASS. Pre-existing `Build` calls in the test file need their new fourth argument — pass `nil` where the test does not care about refs.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add internal/reporter

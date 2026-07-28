@@ -12,6 +12,7 @@ import (
 
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/correlate"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/gitlab"
+	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/history"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/metrics"
 	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/report"
 )
@@ -22,6 +23,14 @@ type Reporter struct {
 	Metrics           metrics.Source
 	ThrottleWarnRatio float64
 	Log               *zap.Logger
+
+	// History supplies typical durations for the delta comparison. Nil disables
+	// the comparison entirely (report.compare.enabled=false) — no API calls.
+	History history.Source
+
+	// DurationDeltaRatio is the relative duration change above which the report
+	// annotates a delta.
+	DurationDeltaRatio float64
 
 	// SigningKey signs the note marker so command replies can trust the report's
 	// pipeline/MR. Empty for `bot run` (no commands).
@@ -52,7 +61,7 @@ func (r *Reporter) ProcessPipeline(ctx context.Context, projectID, pipelineID, m
 		mrIID = iid
 	}
 
-	data, err := r.Build(ctx, projectID, pipelineID)
+	data, err := r.Build(ctx, projectID, pipelineID, pipelineRefs(ref, mrIID))
 	if err != nil {
 		return false, err
 	}
@@ -73,10 +82,12 @@ func (r *Reporter) ProcessPipeline(ctx context.Context, projectID, pipelineID, m
 	return true, nil
 }
 
-// Build assembles the report data for one pipeline. Per-job failures
-// (no pod correlated, metrics query failed) leave that job's Usage nil rather
-// than failing the whole pipeline.
-func (r *Reporter) Build(ctx context.Context, projectID, pipelineID int64) (report.Data, error) {
+// Build assembles the report data for one pipeline. Per-job failures (no pod
+// correlated, metrics query failed) leave that job's Usage nil rather than
+// failing the whole pipeline. excludeRefs are the refs of the pipeline being
+// reported: baseline samples on those refs are ignored, so the comparison is
+// against other code, not this branch's own earlier runs.
+func (r *Reporter) Build(ctx context.Context, projectID, pipelineID int64, excludeRefs []string) (report.Data, error) {
 	jobs, err := r.GitLab.PipelineJobs(ctx, projectID, pipelineID)
 	if err != nil {
 		return report.Data{}, fmt.Errorf("list pipeline jobs: %w", err)
@@ -84,20 +95,47 @@ func (r *Reporter) Build(ctx context.Context, projectID, pipelineID int64) (repo
 	r.Log.Debug("listed pipeline jobs",
 		zap.Int64("project_id", projectID), zap.Int64("pipeline_id", pipelineID), zap.Int("jobs", len(jobs)))
 
-	data := report.Data{PipelineID: pipelineID, ThrottleWarnRatio: r.ThrottleWarnRatio}
+	base := r.baseline(ctx, projectID, excludeRefs)
+
+	data := report.Data{
+		PipelineID:               pipelineID,
+		ThrottleWarnRatio:        r.ThrottleWarnRatio,
+		DurationDeltaRatio:       r.DurationDeltaRatio,
+		BaselinePipelineDuration: base.Pipeline.Median,
+		BaselinePipelineSamples:  base.Pipeline.Samples,
+	}
 	for _, job := range jobs {
 		if !job.StartedAt.IsZero() && !job.FinishedAt.IsZero() {
 			data.RanJobs++
 		}
+		stat := base.Jobs[history.JobKey{Stage: job.Stage, Name: job.Name}]
 		data.Jobs = append(data.Jobs, report.JobReport{
-			Stage:      job.Stage,
-			Name:       job.Name,
-			StartedAt:  job.StartedAt,
-			FinishedAt: job.FinishedAt,
-			Usage:      r.jobUsage(ctx, projectID, job),
+			Stage:            job.Stage,
+			Name:             job.Name,
+			StartedAt:        job.StartedAt,
+			FinishedAt:       job.FinishedAt,
+			BaselineDuration: stat.Median,
+			BaselineSamples:  stat.Samples,
+			Usage:            r.jobUsage(ctx, projectID, job),
 		})
 	}
 	return data, nil
+}
+
+// baseline fetches typical durations, degrading to no comparison. A baseline is
+// a nicety: losing it must never cost the report, so the error is logged and
+// swallowed (only the jobs listing failing aborts a report).
+func (r *Reporter) baseline(ctx context.Context, projectID int64, excludeRefs []string) history.Baseline {
+	if r.History == nil {
+		return history.Baseline{}
+	}
+	b, err := r.History.Baseline(ctx, projectID, excludeRefs)
+	if err != nil {
+		r.Log.Warn("duration baseline unavailable, reporting without comparison",
+			zap.Int64("project_id", projectID), zap.Strings("exclude_refs", excludeRefs), zap.Error(err))
+		return history.Baseline{}
+	}
+	return b
 }
 
 func (r *Reporter) jobUsage(ctx context.Context, projectID int64, job gitlab.Job) *metrics.JobUsage {
@@ -121,4 +159,19 @@ func (r *Reporter) jobUsage(ctx context.Context, projectID int64, job gitlab.Job
 		return nil
 	}
 	return usage
+}
+
+// pipelineRefs is the set of refs that belong to the pipeline being reported.
+// The webhook carries the source branch, while the pipelines API reports MR
+// pipelines under refs/merge-requests/<iid>/head — both must drop out of the
+// baseline, or the branch ends up compared against itself.
+func pipelineRefs(ref string, mrIID int64) []string {
+	out := make([]string, 0, 2)
+	if ref != "" {
+		out = append(out, ref)
+	}
+	if mrIID > 0 {
+		out = append(out, fmt.Sprintf("refs/merge-requests/%d/head", mrIID))
+	}
+	return out
 }

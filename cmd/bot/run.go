@@ -50,7 +50,7 @@ func newRunCmd() *cobra.Command {
 			log.Debug("building report",
 				zap.Int64("project_id", projectID),
 				zap.Int64("pipeline_id", pipelineID))
-			data, err := rep.Build(cmd.Context(), projectID, pipelineID)
+			data, err := rep.Build(cmd.Context(), projectID, pipelineID, nil)
 			if err != nil {
 				return err
 			}
