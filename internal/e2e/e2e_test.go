@@ -199,6 +199,15 @@ func (m *mockProm) server(t *testing.T) *httptest.Server {
 				podName)
 			return
 		}
+		// Container-grouped queries get a two-container pod; pod-level queries
+		// (network) keep the label-less sample.
+		if strings.Contains(query, "by (container)") {
+			_, _ = fmt.Fprint(w,
+				`{"status":"success","data":{"resultType":"vector","result":[`+
+					`{"metric":{"container":"build"},"value":[1752912000,"100"]},`+
+					`{"metric":{"container":"helper"},"value":[1752912000,"23.45"]}]}}`)
+			return
+		}
 		_, _ = fmt.Fprint(w,
 			`{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1752912000,"123.45"]}]}}`)
 	}))
@@ -248,11 +257,12 @@ func harness(t *testing.T, podResolver string) (*fiber.App, *mockGitLab, *mockPr
 		t.Fatalf("source: %v", err)
 	}
 	rep := &reporter.Reporter{
-		GitLab:            glClient,
-		Resolver:          resolver,
-		Metrics:           source,
-		ThrottleWarnRatio: 0.25,
-		Log:               log,
+		GitLab:                 glClient,
+		Resolver:               resolver,
+		Metrics:                source,
+		ThrottleWarnRatio:      0.25,
+		ContainerDetailMaxJobs: 10,
+		Log:                    log,
 	}
 
 	// Same queue+worker shape as `bot serve`: merge_request may be absent, in
@@ -347,6 +357,16 @@ func TestWebhookToMRNote(t *testing.T) {
 	}
 	if !promMock.sawQuery(podName) {
 		t.Error("usage queries were not filtered by the correlated pod name")
+	}
+
+	// The note carries the per-container breakdown and names the helper.
+	for _, want := range []string{"↳ build", "↳ helper"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("note body missing %q:\n%s", want, body)
+		}
+	}
+	if !promMock.sawQuery("by (container)") {
+		t.Error("no container-grouped query was issued")
 	}
 
 	// Second delivery (retry/idempotency): the note must be updated in place.
