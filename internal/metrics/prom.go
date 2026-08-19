@@ -56,30 +56,62 @@ func (s *PromSource) PodUsage(ctx context.Context, pod string, start, end time.T
 
 	u := &JobUsage{LowConfidence: dur < 2*s.scrape}
 
+	// One pass of container-grouped queries, accumulated per container name.
+	// The pod-level totals are derived from the result below, never queried
+	// separately: two query sets drift whenever a container enters or leaves
+	// the window.
+	acc := map[string]*ContainerUsage{}
+	for _, q := range []struct {
+		query string
+		set   func(c *ContainerUsage, v float64)
+	}{
+		{fmt.Sprintf(`sum by (container) (max_over_time(container_memory_working_set_bytes{%s}[%s]))`, csel, window),
+			func(c *ContainerUsage, v float64) { c.PeakMemoryBytes = uint64(v) }},
+		{fmt.Sprintf(`sum by (container) (increase(container_cpu_usage_seconds_total{%s}[%s]))`, csel, window),
+			func(c *ContainerUsage, v float64) { c.CPUSeconds = v }},
+		{fmt.Sprintf(`sum by (container) (increase(container_fs_reads_bytes_total{%s}[%s]))`, csel, window),
+			func(c *ContainerUsage, v float64) { c.DiskReadBytes = uint64(v) }},
+		{fmt.Sprintf(`sum by (container) (increase(container_fs_writes_bytes_total{%s}[%s]))`, csel, window),
+			func(c *ContainerUsage, v float64) { c.DiskWriteBytes = uint64(v) }},
+		{fmt.Sprintf(`sum by (container) (increase(container_cpu_cfs_throttled_periods_total{%s}[%s]))`, csel, window),
+			func(c *ContainerUsage, v float64) { c.ThrottledPeriods = v }},
+		{fmt.Sprintf(`sum by (container) (increase(container_cpu_cfs_periods_total{%s}[%s]))`, csel, window),
+			func(c *ContainerUsage, v float64) { c.Periods = v }},
+		{fmt.Sprintf(`sum by (container) (max_over_time(kube_pod_container_resource_requests{%s,resource="cpu"}[%s]))`, csel, window),
+			func(c *ContainerUsage, v float64) { c.CPURequestCores = v }},
+		{fmt.Sprintf(`sum by (container) (max_over_time(kube_pod_container_resource_limits{%s,resource="cpu"}[%s]))`, csel, window),
+			func(c *ContainerUsage, v float64) { c.CPULimitCores = v }},
+		{fmt.Sprintf(`sum by (container) (max_over_time(kube_pod_container_resource_requests{%s,resource="memory"}[%s]))`, csel, window),
+			func(c *ContainerUsage, v float64) { c.MemoryRequestBytes = uint64(v) }},
+		{fmt.Sprintf(`sum by (container) (max_over_time(kube_pod_container_resource_limits{%s,resource="memory"}[%s]))`, csel, window),
+			func(c *ContainerUsage, v float64) { c.MemoryLimitBytes = uint64(v) }},
+	} {
+		samples, err := s.vector(ctx, q.query, end)
+		if err != nil {
+			return nil, err
+		}
+		for name, v := range samples {
+			c, ok := acc[name]
+			if !ok {
+				c = &ContainerUsage{Name: name}
+				acc[name] = c
+			}
+			q.set(c, v)
+		}
+	}
+	u.Containers = sortedContainers(acc)
+	u.sumContainers()
+
+	// Network is pod-level: cadvisor's container_network_* series carry no
+	// container label, so it cannot be attributed to a container.
 	for _, q := range []struct {
 		query string
 		set   func(v float64)
 	}{
-		{fmt.Sprintf(`sum(max_over_time(container_memory_working_set_bytes{%s}[%s]))`, csel, window),
-			func(v float64) { u.PeakMemoryBytes = uint64(v) }},
-		{fmt.Sprintf(`sum(increase(container_cpu_usage_seconds_total{%s}[%s]))`, csel, window),
-			func(v float64) { u.CPUSeconds = v }},
 		{fmt.Sprintf(`sum(increase(container_network_receive_bytes_total{%s}[%s]))`, psel, window),
 			func(v float64) { u.NetworkRxBytes = uint64(v) }},
 		{fmt.Sprintf(`sum(increase(container_network_transmit_bytes_total{%s}[%s]))`, psel, window),
 			func(v float64) { u.NetworkTxBytes = uint64(v) }},
-		{fmt.Sprintf(`sum(increase(container_fs_reads_bytes_total{%s}[%s]))`, csel, window),
-			func(v float64) { u.DiskReadBytes = uint64(v) }},
-		{fmt.Sprintf(`sum(increase(container_fs_writes_bytes_total{%s}[%s]))`, csel, window),
-			func(v float64) { u.DiskWriteBytes = uint64(v) }},
-		{fmt.Sprintf(`sum(max_over_time(kube_pod_container_resource_requests{%s,resource="cpu"}[%s]))`, psel, window),
-			func(v float64) { u.CPURequestCores = v }},
-		{fmt.Sprintf(`sum(max_over_time(kube_pod_container_resource_limits{%s,resource="cpu"}[%s]))`, psel, window),
-			func(v float64) { u.CPULimitCores = v }},
-		{fmt.Sprintf(`sum(max_over_time(kube_pod_container_resource_requests{%s,resource="memory"}[%s]))`, psel, window),
-			func(v float64) { u.MemoryRequestBytes = uint64(v) }},
-		{fmt.Sprintf(`sum(max_over_time(kube_pod_container_resource_limits{%s,resource="memory"}[%s]))`, psel, window),
-			func(v float64) { u.MemoryLimitBytes = uint64(v) }},
 	} {
 		v, ok, err := s.scalar(ctx, q.query, end)
 		if err != nil {
@@ -90,21 +122,9 @@ func (s *PromSource) PodUsage(ctx context.Context, pod string, start, end time.T
 		}
 	}
 
-	throttled, _, err := s.scalar(ctx,
-		fmt.Sprintf(`sum(increase(container_cpu_cfs_throttled_periods_total{%s}[%s]))`, csel, window), end)
-	if err != nil {
-		return nil, err
-	}
-	periods, ok, err := s.scalar(ctx,
-		fmt.Sprintf(`sum(increase(container_cpu_cfs_periods_total{%s}[%s]))`, csel, window), end)
-	if err != nil {
-		return nil, err
-	}
-	if ok && periods > 0 {
-		u.ThrottledRatio = throttled / periods
-	}
 	s.log.Debug("pod usage computed",
 		zap.String("pod", pod),
+		zap.Int("containers", len(u.Containers)),
 		zap.Uint64("peak_memory_bytes", u.PeakMemoryBytes),
 		zap.Float64("cpu_seconds", u.CPUSeconds),
 		zap.Float64("throttled_ratio", u.ThrottledRatio),
@@ -129,6 +149,36 @@ func (s *PromSource) scalar(ctx context.Context, query string, ts time.Time) (fl
 		return 0, false, nil
 	}
 	return float64(vec[0].Value), true, nil
+}
+
+// vector runs an instant query grouped by container and returns one value per
+// container name. An empty result yields a nil map: a query that matched no
+// series leaves the field unset, it is never a measured zero.
+func (s *PromSource) vector(ctx context.Context, query string, ts time.Time) (map[string]float64, error) {
+	defer s.observe(time.Now())
+	val, _, err := s.api.Query(ctx, query, ts)
+	if err != nil {
+		return nil, fmt.Errorf("prometheus query %q: %w", query, err)
+	}
+	vec, ok := val.(model.Vector)
+	if !ok {
+		return nil, fmt.Errorf("prometheus query %q: unexpected result type %s", query, val.Type())
+	}
+	if len(vec) == 0 {
+		s.log.Debug("prometheus query matched no series", zap.String("query", query))
+		return nil, nil
+	}
+	out := make(map[string]float64, len(vec))
+	for _, sm := range vec {
+		name := string(sm.Metric["container"])
+		if name == "" {
+			// No container label: not a per-container sample, nothing to
+			// attribute it to.
+			continue
+		}
+		out[name] = float64(sm.Value)
+	}
+	return out, nil
 }
 
 // activeSpanLookback bounds how far back PodActiveSpan looks for a pod's series.

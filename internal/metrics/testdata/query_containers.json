@@ -1,0 +1,11 @@
+{
+  "status": "success",
+  "data": {
+    "resultType": "vector",
+    "result": [
+      {"metric": {"container": "helper", "pod": "runner-x"}, "value": [1752912000, "10"]},
+      {"metric": {"container": "build", "pod": "runner-x"}, "value": [1752912000, "100"]},
+      {"metric": {"container": "svc-0", "pod": "runner-x"}, "value": [1752912000, "1"]}
+    ]
+  }
+}
