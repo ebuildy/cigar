@@ -27,6 +27,13 @@ type JobUsage struct {
 	// LowConfidence marks jobs shorter than two scrape intervals: numbers are
 	// reported as-is with a marker, never fabricated.
 	LowConfidence bool
+
+	// Containers is the per-container breakdown of this pod, ordered build,
+	// helper, svc-N ascending, then anything else alphabetically. It is empty
+	// when the container-level series were absent — the totals above are then
+	// all that is known. Every total above is derived from this slice by
+	// sumContainers, so a total can never disagree with its rows.
+	Containers []ContainerUsage
 }
 
 // Source is the boundary interface consumed by the worker; tests stub it.
