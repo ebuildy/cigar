@@ -107,11 +107,12 @@ func printJobDetails(cmd *cobra.Command, rep *reporter.Reporter, cfg *config.Con
 	// Numeric usage via the shared report renderer (one-job report). A nil usage
 	// makes Render emit its "no resource data" notice rather than fake zeros.
 	data := report.Data{
-		PipelineID:        pipelineID,
-		Status:            "job: " + j.Name,
-		Jobs:              []report.JobReport{{Stage: j.Stage, Name: j.Name, Usage: usage}},
-		ThrottleWarnRatio: cfg.ThrottleWarnRatio,
-		RanJobs:           1,
+		PipelineID:             pipelineID,
+		Status:                 "job: " + j.Name,
+		Jobs:                   []report.JobReport{{Stage: j.Stage, Name: j.Name, Usage: usage}},
+		ThrottleWarnRatio:      cfg.ThrottleWarnRatio,
+		ContainerDetailMaxJobs: cfg.ContainerDetailMaxJobs,
+		RanJobs:                1,
 	}
 	body, err := report.Render(data)
 	if err != nil {

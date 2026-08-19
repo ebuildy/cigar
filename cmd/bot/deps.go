@@ -65,12 +65,13 @@ func newReporter(cfg *config.Config, log *zap.Logger, obs metrics.QueryObserver)
 		return nil, err
 	}
 	return &reporter.Reporter{
-		GitLab:            gl,
-		Resolver:          resolver,
-		Metrics:           source,
-		ThrottleWarnRatio: cfg.ThrottleWarnRatio,
-		SigningKey:        []byte(cfg.CommandsSigningKey),
-		Log:               log.Named("reporter"),
+		GitLab:                 gl,
+		Resolver:               resolver,
+		Metrics:                source,
+		ThrottleWarnRatio:      cfg.ThrottleWarnRatio,
+		ContainerDetailMaxJobs: cfg.ContainerDetailMaxJobs,
+		SigningKey:             []byte(cfg.CommandsSigningKey),
+		Log:                    log.Named("reporter"),
 	}, nil
 }
 
