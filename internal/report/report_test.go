@@ -379,3 +379,103 @@ func TestRenderDefaultsToPlainMarker(t *testing.T) {
 		t.Fatalf("body missing plain Marker:\n%s", body)
 	}
 }
+
+// containerJob is one job with a three-container breakdown, shared by the
+// tests below.
+func containerJob() JobReport {
+	base := time.Date(2026, 8, 19, 10, 0, 0, 0, time.UTC)
+	u := &metrics.JobUsage{
+		NetworkRxBytes: 8 * 1024 * 1024,
+		NetworkTxBytes: 3 * 1024 * 1024,
+		Containers: []metrics.ContainerUsage{
+			{Name: "build", CPUSeconds: 39.8, PeakMemoryBytes: 380 * 1024 * 1024,
+				DiskReadBytes: 580 * 1024 * 1024, DiskWriteBytes: 200 * 1024 * 1024,
+				ThrottledPeriods: 12, Periods: 100,
+				CPURequestCores: 0.15, CPULimitCores: 0.25,
+				MemoryRequestBytes: 128 * 1024 * 1024, MemoryLimitBytes: 256 * 1024 * 1024},
+			{Name: "helper", CPUSeconds: 2.3, PeakMemoryBytes: 24 * 1024 * 1024,
+				DiskReadBytes: 20 * 1024 * 1024, DiskWriteBytes: 20 * 1024 * 1024,
+				ThrottledPeriods: 58, Periods: 100,
+				CPURequestCores: 0.1, CPULimitCores: 0.25,
+				MemoryRequestBytes: 128 * 1024 * 1024, MemoryLimitBytes: 256 * 1024 * 1024},
+			// No CFS series and no requests/limits: everything must render as
+			// an em dash, never as a measured 0%.
+			{Name: "svc-0", CPUSeconds: 0.4, PeakMemoryBytes: 8 * 1024 * 1024},
+		},
+	}
+	u.SumForTest()
+	return JobReport{Stage: "build", Name: "compile",
+		StartedAt: base, FinishedAt: base.Add(2 * time.Minute), Usage: u}
+}
+
+func TestRenderContainersGolden(t *testing.T) {
+	d := Data{
+		PipelineID:             777,
+		Status:                 "success",
+		ThrottleWarnRatio:      0.25,
+		ContainerDetailMaxJobs: 10,
+		RanJobs:                1,
+		Jobs:                   []JobReport{containerJob()},
+	}
+	got := mustRender(t, d)
+
+	golden := filepath.Join("testdata", "report-containers.md")
+	if *update {
+		if err := os.WriteFile(golden, []byte(got), 0o644); err != nil {
+			t.Fatalf("write golden: %v", err)
+		}
+	}
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatalf("read golden (run with -update to create): %v", err)
+	}
+	if got != string(want) {
+		t.Errorf("report does not match %s (run with -update to refresh):\n%s", golden, got)
+	}
+}
+
+func TestRenderContainersSuppressedAboveThreshold(t *testing.T) {
+	d := Data{
+		PipelineID:             778,
+		Status:                 "success",
+		ThrottleWarnRatio:      0.25,
+		ContainerDetailMaxJobs: 1,
+		RanJobs:                2,
+		Jobs:                   []JobReport{containerJob(), {Stage: "test", Name: "unit"}},
+	}
+	out := mustRender(t, d)
+	if strings.Contains(out, "↳") {
+		t.Errorf("breakdown must be suppressed above the threshold, got:\n%s", out)
+	}
+}
+
+func TestRenderContainersDisabledByZero(t *testing.T) {
+	d := Data{
+		PipelineID:             779,
+		Status:                 "success",
+		ContainerDetailMaxJobs: 0,
+		RanJobs:                1,
+		Jobs:                   []JobReport{containerJob()},
+	}
+	if out := mustRender(t, d); strings.Contains(out, "↳") {
+		t.Errorf("0 must disable the breakdown entirely, got:\n%s", out)
+	}
+}
+
+func TestRenderSingleContainerNotNested(t *testing.T) {
+	// A one-container breakdown would just repeat the job row.
+	u := &metrics.JobUsage{Containers: []metrics.ContainerUsage{
+		{Name: "build", CPUSeconds: 3, PeakMemoryBytes: 64 * 1024 * 1024},
+	}}
+	u.SumForTest()
+	d := Data{
+		PipelineID:             780,
+		Status:                 "success",
+		ContainerDetailMaxJobs: 10,
+		RanJobs:                1,
+		Jobs:                   []JobReport{{Stage: "build", Name: "compile", Usage: u}},
+	}
+	if out := mustRender(t, d); strings.Contains(out, "↳") {
+		t.Errorf("single-container job must not be nested, got:\n%s", out)
+	}
+}
