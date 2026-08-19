@@ -72,7 +72,8 @@ func TestSettingsCoverAllKeys(t *testing.T) {
 	want := []string{
 		"gitlab.url", "prometheus.url", "prometheus.scrape_interval", "pod_resolver",
 		"webhook.auth_method", "report.throttle_warn_ratio", "report.long_job_duration",
-		"report.memory_pressure_ratio", "commands.enabled", "commands.chart_format",
+		"report.memory_pressure_ratio", "report.container_detail_max_jobs",
+		"commands.enabled", "commands.chart_format",
 		"server.listen_addr", "server.ops_addr", "log.level",
 	}
 	got := map[string]bool{}
@@ -319,4 +320,60 @@ func TestLoadAdviceThresholds(t *testing.T) {
 			t.Errorf("ThrottleWarnRatio = %v, want 0", cfg.ThrottleWarnRatio)
 		}
 	})
+}
+
+func TestContainerDetailMaxJobsDefault(t *testing.T) {
+	t.Setenv("GITLAB_TOKEN", "tok")
+	t.Setenv("PROMETHEUS_URL", "http://prom")
+
+	cfg, err := loadEnv(t)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ContainerDetailMaxJobs != 10 {
+		t.Errorf("ContainerDetailMaxJobs = %d, want 10", cfg.ContainerDetailMaxJobs)
+	}
+}
+
+func TestContainerDetailMaxJobsInvalid(t *testing.T) {
+	for _, raw := range []string{"-1", "many", "1.5"} {
+		t.Run(raw, func(t *testing.T) {
+			t.Setenv("GITLAB_TOKEN", "tok")
+			t.Setenv("PROMETHEUS_URL", "http://prom")
+			t.Setenv("REPORT_CONTAINER_DETAIL_MAX_JOBS", raw)
+			if _, err := loadEnv(t); err == nil {
+				t.Errorf("Load accepted %q, want an error", raw)
+			}
+		})
+	}
+}
+
+// An empty env var is unset as far as viper is concerned, so it falls back to
+// the default rather than failing validation.
+func TestContainerDetailMaxJobsEmptyEnvUsesDefault(t *testing.T) {
+	t.Setenv("GITLAB_TOKEN", "tok")
+	t.Setenv("PROMETHEUS_URL", "http://prom")
+	t.Setenv("REPORT_CONTAINER_DETAIL_MAX_JOBS", "")
+
+	cfg, err := loadEnv(t)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ContainerDetailMaxJobs != 10 {
+		t.Errorf("ContainerDetailMaxJobs = %d, want the default 10", cfg.ContainerDetailMaxJobs)
+	}
+}
+
+func TestContainerDetailMaxJobsZeroDisables(t *testing.T) {
+	t.Setenv("GITLAB_TOKEN", "tok")
+	t.Setenv("PROMETHEUS_URL", "http://prom")
+	t.Setenv("REPORT_CONTAINER_DETAIL_MAX_JOBS", "0")
+
+	cfg, err := loadEnv(t)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ContainerDetailMaxJobs != 0 {
+		t.Errorf("ContainerDetailMaxJobs = %d, want 0", cfg.ContainerDetailMaxJobs)
+	}
 }
