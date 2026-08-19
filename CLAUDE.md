@@ -15,7 +15,8 @@ A Go service that receives GitLab **Pipeline events** webhooks, queries **Promet
 
 - Pipeline totals: wall-clock duration (max finish − min start across jobs), total memory (sum of job peaks), peak memory (max working set), CPU time consumed, network RX/TX, disk read/write.
 - Per-job table: job name | CPU time | peak memory | memory request/limit | CPU request/limit | throttled % | network | disk read/write.
-- ⚠️ CPU throttling warning when `throttled_periods / periods > threshold` (default 25%), with advice: set `KUBERNETES_CPU_REQUEST` / `KUBERNETES_CPU_LIMIT` GitLab CI variables (and the memory equivalents `KUBERNETES_MEMORY_REQUEST` / `KUBERNETES_MEMORY_LIMIT`) on the job or project.
+- Per-container rows (`↳ build`, `↳ helper`, `↳ svc-0`) nested under each job while the pipeline has at most `report.container_detail_max_jobs` jobs (default 10; 0 disables). A job row is always the pod total; the `details <job>` command serves the same table on demand, so large pipelines lose nothing.
+- ⚠️ CPU throttling warning when `throttled_periods / periods > threshold` (default 25%), raised **once per throttled container**, each carrying the variables that govern that container: `KUBERNETES_CPU_*` (build), `KUBERNETES_HELPER_CPU_*` (helper), `KUBERNETES_SERVICE_CPU_*` (all services at once) — plus the memory equivalents. With no container breakdown available the rule falls back to the pod-level ratio and the build variables, byte-identical to its pre-breakdown output.
 - Advice when usage ≪ requests (over-provisioned) or peak memory near limit (OOM risk).
 
 ## Architecture
@@ -77,12 +78,18 @@ Either way, always exclude the `POD`/pause container (`container!="", container!
 
 ### PromQL queries (per job, over `[started_at, finished_at]`)
 
-- Peak memory: `max_over_time(container_memory_working_set_bytes{pod="..."}[<window>])` per container, summed.
-- CPU time: `increase(container_cpu_usage_seconds_total{...}[<window>])` → render as millicore-seconds or "232m avg".
-- Throttling: `increase(container_cpu_cfs_throttled_periods_total[...]) / increase(container_cpu_cfs_periods_total[...])` per container.
-- Network: `increase(container_network_receive_bytes_total{...}[<window>])` and transmit equivalent (pod-level, no `container` label).
-- Disk: `increase(container_fs_reads_bytes_total{...}[<window>])` and writes equivalent (container-level, excludes POD; summed per container).
-- Requests/limits: `kube_pod_container_resource_requests` / `kube_pod_container_resource_limits` (kube-state-metrics).
+Every container-level query is `sum by (container) (...)`: `PodUsage` builds a
+`[]metrics.ContainerUsage` (build / helper / svc-N) and **derives** every
+pod-level total on `JobUsage` from it via `sumContainers`. A total is therefore
+always the sum of its rows — never a second query, which would drift when a
+container enters or leaves the window.
+
+- Peak memory: `sum by (container) (max_over_time(container_memory_working_set_bytes{pod="..."}[<window>]))`.
+- CPU time: `sum by (container) (increase(container_cpu_usage_seconds_total{...}[<window>]))` → render as millicore-seconds or "232m avg".
+- Throttling: `sum by (container) (increase(container_cpu_cfs_throttled_periods_total[...]))` and the periods equivalent, stored as **raw counters** per container. The job ratio stays `Σthrottled / Σperiods`; a mean of per-container ratios would not reproduce it. No periods series ⇒ ratio unset, rendered `—`, never `0%`.
+- Network: `sum(increase(container_network_receive_bytes_total{...}[<window>]))` and transmit equivalent — pod-level only, no `container` label, so container rows show `—`.
+- Disk: `sum by (container) (increase(container_fs_reads_bytes_total{...}[<window>]))` and writes equivalent (excludes POD).
+- Requests/limits: `sum by (container) (max_over_time(kube_pod_container_resource_requests{...}))` / `_limits` (kube-state-metrics), container-filtered like the rest — the sum matches the old pod-wide query.
 - Account for Prometheus scrape interval (`SCRAPE_INTERVAL`, default `30s`): pad windows by one scrape interval; short jobs (<2 scrapes) get a "low confidence" marker, not fabricated numbers.
 - Absent series ≠ zero: a query matching nothing leaves the field unset, it is never written as `0` measured.
 

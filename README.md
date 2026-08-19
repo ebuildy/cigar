@@ -16,7 +16,8 @@ It receives GitLab **Pipeline event** webhooks, queries **Prometheus** (cadvisor
 
 - **Pipeline totals** — wall-clock duration (earliest start → latest finish), total memory (sum of job peaks), peak memory, CPU time consumed, network RX/TX, disk read/write.
 - **Per-job table** — job name, CPU time, peak memory, memory request/limit, CPU request/limit, throttled %, network, disk read/write.
-- **⚠️ CPU throttling warnings** when `throttled_periods / periods` exceeds the threshold (default 25 %), with concrete advice: set `KUBERNETES_CPU_REQUEST` / `KUBERNETES_CPU_LIMIT` (and the memory equivalents) on the job or project.
+- **Per-container breakdown** — a runner pod is not one container: `build` runs your script, `helper` does git clone / artifacts / cache, and each CI `services:` entry gets an `svc-N`. Small pipelines get a `↳` row per container under each job; larger ones keep the table short and serve the same split via `details <job>`.
+- **⚠️ CPU throttling warnings** when `throttled_periods / periods` exceeds the threshold (default 25 %), raised **per container**, each with the CI variables that actually govern it: `KUBERNETES_CPU_*` for the build container, `KUBERNETES_HELPER_CPU_*` for the helper, `KUBERNETES_SERVICE_CPU_*` for services.
 - **Right-sizing hints** — over-provisioning advice when usage ≪ requests, OOM-risk warning when peak memory is near the limit.
 
 The comment is idempotent: the bot finds its previous note (via an HTML marker) and updates it in place — one comment per MR, never spam.
@@ -35,7 +36,7 @@ GitLab ──Pipeline Hook──▶ webhook handler ──▶ queue ──▶ wo
 1. GitLab fires a webhook when a pipeline reaches a terminal state (`success`, `failed`).
 2. The handler validates the token, ignores non-terminal statuses and pipelines without an MR, and enqueues the event (it answers within GitLab's 10 s timeout; slow metric queries happen in the worker).
 3. For each job, the worker resolves the runner pod (pod labels, with a pod-name-pattern fallback) and queries Prometheus over the job's `started_at`–`finished_at` window, padded by one scrape interval. Jobs shorter than two scrapes are flagged "low confidence" rather than given fabricated numbers.
-4. Metrics are aggregated per job and pipeline, rendered to markdown, and posted as the MR note.
+4. Metrics are aggregated per container, then per job and pipeline (a job row is always the sum of its container rows), rendered to markdown, and posted as the MR note.
 
 ## Project layout
 
@@ -90,6 +91,7 @@ works with just env).
 | `report.throttle_warn_ratio` | `REPORT_THROTTLE_WARN_RATIO` | `0.25` | ⚠️ warning threshold |
 | `report.long_job_duration` | `REPORT_LONG_JOB_DURATION` | `10m` | advice: split long jobs |
 | `report.memory_pressure_ratio` | `REPORT_MEMORY_PRESSURE_RATIO` | `0.9` | advice: OOMKill risk |
+| `report.container_detail_max_jobs` | `REPORT_CONTAINER_DETAIL_MAX_JOBS` | `10` | nest per-container rows up to this many jobs (0 disables) |
 | `commands.enabled` | `COMMANDS_ENABLED` | `false` | interactive report commands |
 | `commands.chart_format` | `COMMANDS_CHART_FORMAT` | `png` | `png`, `svg` or `markdown` |
 | `server.listen_addr` | `SERVER_LISTEN_ADDR` | `:8080` | webhook listen address |

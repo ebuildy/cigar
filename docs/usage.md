@@ -51,6 +51,7 @@ startup on missing/invalid required values.
 | `PROMETHEUS_SCRAPE_INTERVAL` | no | `30s` | Prometheus scrape interval; query windows are padded by one interval |
 | `REPORT_LONG_JOB_DURATION` | no | `10m` | Job duration above which `advise` suggests splitting the job |
 | `REPORT_MEMORY_PRESSURE_RATIO` | no | `0.9` | Peak-memory-to-limit ratio above which `advise` warns about OOMKill risk |
+| `REPORT_CONTAINER_DETAIL_MAX_JOBS` | no | `10` | Nest per-container rows under each job while the pipeline has at most this many jobs; `0` disables the breakdown |
 | `SERVER_LISTEN_ADDR` | no | `:8080` | Webhook HTTP listener |
 | `SERVER_OPS_ADDR` | no | `:8081` | Ops listener: `/healthz`, `/readyz`, `/metrics` |
 | `LOG_LEVEL` | no | `info` | `debug` \| `info` \| `warn` \| `error` — structured JSON logs (zap) written to stdout; also settable per-invocation with the `--log-level` root flag, which takes precedence |
@@ -260,6 +261,32 @@ mise r lint
 bot run --project <project-id> <pipeline-id>
 ```
 
+### Containers in a runner pod
+
+A GitLab Kubernetes runner pod runs more than the job's script:
+
+| Container | What it does | CPU variables |
+|---|---|---|
+| `build` | the job's `script:` | `KUBERNETES_CPU_REQUEST` / `KUBERNETES_CPU_LIMIT` |
+| `helper` | git clone, artifacts, cache | `KUBERNETES_HELPER_CPU_REQUEST` / `KUBERNETES_HELPER_CPU_LIMIT` |
+| `svc-N` | one per CI `services:` entry | `KUBERNETES_SERVICE_CPU_REQUEST` / `KUBERNETES_SERVICE_CPU_LIMIT` (all services at once) |
+
+(The memory equivalents follow the same naming: `KUBERNETES_MEMORY_LIMIT`,
+`KUBERNETES_HELPER_MEMORY_LIMIT`, `KUBERNETES_SERVICE_MEMORY_LIMIT`, …)
+
+A job row in the report is the **pod total** — every container summed. The `↳`
+rows beneath it show the split, up to
+`REPORT_CONTAINER_DETAIL_MAX_JOBS` jobs; past that the table would grow
+unreadable, and `details <job>` serves the same breakdown on demand.
+
+A throttled `helper` is worth acting on even when the job's own script is not
+throttled: it stalls clone, cache and artifact upload, which inflates
+wall-clock time without ever appearing in the build container's numbers.
+
+Network is reported at the pod level only — cadvisor's network series carry no
+container label — so container rows show `—` there rather than a fabricated
+zero.
+
 ---
 
 ## 4. Interactive report commands
@@ -307,7 +334,7 @@ silent, and a pipeline with nothing to fix gets `You are all good dude!`.
 
 | Rule | Fires when |
 |---|---|
-| `cpu-throttle` | The job was throttled at or above `REPORT_THROTTLE_WARN_RATIO` |
+| `cpu-throttle` | Any container of the job was throttled at or above `REPORT_THROTTLE_WARN_RATIO` — one finding per container, each naming the CI variables that govern it |
 | `java-threads` | Throttled **and** the job trace shows a Maven/Gradle/Java build |
 | `long-job` | The job ran longer than `REPORT_LONG_JOB_DURATION` |
 | `memory-pressure` | Peak memory reached `REPORT_MEMORY_PRESSURE_RATIO` of the memory limit |

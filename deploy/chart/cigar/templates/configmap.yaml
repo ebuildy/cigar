@@ -22,6 +22,7 @@ data:
       throttle_warn_ratio: {{ .Values.config.report.throttleWarnRatio | quote }}
       long_job_duration: {{ .Values.config.report.longJobDuration | quote }}
       memory_pressure_ratio: {{ .Values.config.report.memoryPressureRatio | quote }}
+      container_detail_max_jobs: {{ .Values.config.report.containerDetailMaxJobs | quote }}
     commands:
       enabled: {{ .Values.config.commands.enabled | quote }}
       chart_format: {{ .Values.config.commands.chartFormat | quote }}

@@ -30,6 +30,10 @@ config:
     throttleWarnRatio: "0.25"
     longJobDuration: "10m"
     memoryPressureRatio: "0.9"
+    # Nest per-container rows (build / helper / svc-N) under each job while
+    # the pipeline has at most this many jobs. 0 disables; `details <job>`
+    # always serves the breakdown on demand.
+    containerDetailMaxJobs: 10
   commands:
     # Interactive report commands. Requires secrets.COMMANDS_SIGNING_KEY when
     # true.

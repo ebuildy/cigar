@@ -22,6 +22,7 @@ tests:
               throttle_warn_ratio: "0.25"
               long_job_duration: "10m"
               memory_pressure_ratio: "0.9"
+              container_detail_max_jobs: "10"
             commands:
               enabled: "false"
               chart_format: "png"
@@ -84,3 +85,13 @@ tests:
     asserts:
       - failedTemplate:
           errorMessage: 'config.webhook.authMethod must be "secret" or "signing_token", got "mtls"'
+
+  - it: propagates containerDetailMaxJobs
+    set:
+      config:
+        report:
+          containerDetailMaxJobs: 25
+    asserts:
+      - matchRegex:
+          path: data["config.yaml"]
+          pattern: 'container_detail_max_jobs: "25"'
