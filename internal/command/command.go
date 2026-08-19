@@ -106,7 +106,7 @@ func firstNonEmptyLine(body string) string {
 // HelpText is the reply for the help command. Extend it as commands are added.
 const HelpText = "**cigar commands**\n\n" +
 	"- `help` — show this message\n" +
-	"- `details job <name>` — CPU / memory / network charts for a job in this report\n" +
+	"- `details job <name>` — per-container breakdown plus CPU / memory / network charts for a job in this report\n" +
 	"- `details pod <runner-...>` — same, for a runner pod in this report\n" +
 	"- `details <name>` — auto-detects job vs pod\n" +
 	"- `advise` — recommendations for every job in this report\n" +

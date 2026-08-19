@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -334,5 +335,86 @@ func TestHandleAdviseWithoutAdvisor(t *testing.T) {
 	}
 	if len(gl.replies) != 1 || !strings.Contains(gl.replies[0], "not available") {
 		t.Fatalf("replies = %v, want one 'not available' notice", gl.replies)
+	}
+}
+
+// fakeUsage serves one pod usage with a two-container breakdown.
+type fakeUsage struct{ err error }
+
+func (f *fakeUsage) PodUsage(context.Context, string, time.Time, time.Time) (*metrics.JobUsage, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	u := &metrics.JobUsage{Containers: []metrics.ContainerUsage{
+		{Name: "build", CPUSeconds: 39.8, PeakMemoryBytes: 380 * 1024 * 1024,
+			ThrottledPeriods: 12, Periods: 100},
+		{Name: "helper", CPUSeconds: 2.3, PeakMemoryBytes: 24 * 1024 * 1024,
+			ThrottledPeriods: 58, Periods: 100},
+	}}
+	u.SumForTest()
+	return u, nil
+}
+
+// detailsHandler builds a handler whose `details job build` resolves to a pod
+// with a non-empty series, matching TestHandleDetailsJob's fixture.
+func detailsHandler(t *testing.T, usage metrics.Source) (*Handler, *fakeGitLab) {
+	t.Helper()
+	start := time.Now().Add(-5 * time.Minute)
+	end := time.Now()
+	gl := &fakeGitLab{
+		discussion: signedRoot(42, 3),
+		jobs:       []gitlab.Job{{ID: 1, Name: "build", StartedAt: start, FinishedAt: end}},
+	}
+	res := &fakeResolver{pods: map[int64]string{1: "runner-abc-project-7-concurrent-0"}}
+	h := newHandler(gl, res, &fakeSeries{series: nonEmptySeries()})
+	h.Usage = usage
+	h.ThrottleWarnRatio = 0.25
+	return h, gl
+}
+
+func detailsEvent() NoteEvent {
+	return NoteEvent{ProjectID: 7, MRIID: 3, DiscussionID: "abc", AuthorID: 9, Body: "details job build"}
+}
+
+func TestHandleDetailsIncludesContainerTable(t *testing.T) {
+	h, gl := detailsHandler(t, &fakeUsage{})
+
+	if err := h.Handle(t.Context(), detailsEvent()); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(gl.replies) != 1 {
+		t.Fatalf("replies = %d, want 1", len(gl.replies))
+	}
+	for _, want := range []string{"| Container |", "| build |", "| helper |", "**58%** ⚠️"} {
+		if !strings.Contains(gl.replies[0], want) {
+			t.Errorf("reply missing %q:\n%s", want, gl.replies[0])
+		}
+	}
+}
+
+func TestHandleDetailsStillRepliesWhenUsageFails(t *testing.T) {
+	// A chart is worth more than an error: the breakdown is best-effort.
+	h, gl := detailsHandler(t, &fakeUsage{err: errors.New("prometheus down")})
+
+	if err := h.Handle(t.Context(), detailsEvent()); err != nil {
+		t.Fatalf("Handle must not fail when the breakdown is unavailable: %v", err)
+	}
+	if len(gl.replies) != 1 {
+		t.Fatalf("replies = %d, want 1", len(gl.replies))
+	}
+	if strings.Contains(gl.replies[0], "| Container |") {
+		t.Errorf("failed breakdown must be omitted, not rendered:\n%s", gl.replies[0])
+	}
+}
+
+func TestHandleDetailsWithoutUsageSource(t *testing.T) {
+	// A nil source is legal: charts only, no table, no error.
+	h, gl := detailsHandler(t, nil)
+
+	if err := h.Handle(t.Context(), detailsEvent()); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if len(gl.replies) != 1 || strings.Contains(gl.replies[0], "| Container |") {
+		t.Errorf("nil usage source must omit the table:\n%v", gl.replies)
 	}
 }

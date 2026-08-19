@@ -32,9 +32,15 @@ type Recorder interface {
 
 // Handler authorizes and executes command notes.
 type Handler struct {
-	GitLab      gitlab.Client
-	Resolver    correlate.Resolver
-	Series      metrics.SeriesSource
+	GitLab   gitlab.Client
+	Resolver correlate.Resolver
+	Series   metrics.SeriesSource
+
+	// Usage supplies the per-container breakdown shown by `details`. Optional:
+	// a nil source, or a failing query, simply omits the table.
+	Usage             metrics.Source
+	ThrottleWarnRatio float64
+
 	Advisor     Advisor // nil disables the advise command
 	SigningKey  []byte
 	BotUserID   int64
@@ -144,6 +150,7 @@ func (h *Handler) details(ctx context.Context, ev NoteEvent, pipelineID int64, c
 	}
 	var body strings.Builder
 	fmt.Fprintf(&body, "### Resource usage for `%s`\n\n", cmd.Name)
+	h.writeContainerTable(ctx, &body, pod, start, end)
 	for _, c := range charts {
 		data, err := chart.Render(h.ChartFormat, c.title, c.unit, c.lines)
 		if err != nil {
@@ -163,6 +170,27 @@ func (h *Handler) details(ctx context.Context, ev NoteEvent, pipelineID int64, c
 		body.WriteString("\n\n")
 	}
 	return h.reply(ctx, ev, body.String())
+}
+
+// writeContainerTable appends the per-container breakdown for pod. It is
+// best-effort: a nil source, a failed query or a pod with no container series
+// leaves the reply to its charts rather than turning into an error.
+func (h *Handler) writeContainerTable(ctx context.Context, body *strings.Builder, pod string, start, end time.Time) {
+	if h.Usage == nil {
+		return
+	}
+	u, err := h.Usage.PodUsage(ctx, pod, start, end)
+	if err != nil {
+		h.Log.Warn("container breakdown unavailable",
+			zap.String("pod", pod), zap.Error(err))
+		return
+	}
+	table := report.ContainerTable(u.Containers, h.ThrottleWarnRatio)
+	if table == "" {
+		return
+	}
+	body.WriteString(table)
+	body.WriteString("\n")
 }
 
 func toChart(l metrics.Line) chart.Series {

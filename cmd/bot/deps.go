@@ -122,14 +122,16 @@ func newCommandHandler(ctx context.Context, cfg *config.Config, log *zap.Logger,
 		return nil, err
 	}
 	return &command.Handler{
-		GitLab:      gl,
-		Resolver:    resolver,
-		Series:      source,
-		Advisor:     reporterAdvisor{rep: rep, eng: eng},
-		SigningKey:  []byte(cfg.CommandsSigningKey),
-		BotUserID:   botID,
-		ChartFormat: format,
-		Metrics:     m,
-		Log:         log.Named("command"),
+		GitLab:            gl,
+		Resolver:          resolver,
+		Series:            source,
+		Usage:             source,
+		ThrottleWarnRatio: cfg.ThrottleWarnRatio,
+		Advisor:           reporterAdvisor{rep: rep, eng: eng},
+		SigningKey:        []byte(cfg.CommandsSigningKey),
+		BotUserID:         botID,
+		ChartFormat:       format,
+		Metrics:           m,
+		Log:               log.Named("command"),
 	}, nil
 }
