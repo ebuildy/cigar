@@ -10,14 +10,22 @@
 #                     contrast row.
 #   3. network-only : ~no CPU, just hammers the GitLab API in a loop (~2 min).
 #                     Exercises the network RX/TX columns.
+#   4. helper-throttle : starves the *helper* container (clone/artifacts/cache)
+#                     while the build container is comfortable. Exercises
+#                     cigar's per-container breakdown and its
+#                     KUBERNETES_HELPER_CPU_* advice.
+#   5. with-services : runs a postgres service so the build pod gets an `svc-0`
+#                     container. Exercises the svc-N row and the
+#                     KUBERNETES_SERVICE_CPU_* advice.
 #
 # Pipeline runs ONLY for merge requests (workflow rule below), matching how
 # cigar resolves the MR to comment on.
 #
-# NOTE: for job 1 to actually throttle, the Kubernetes runner must allow the
-# CPU-limit overwrite (*_overwrite_max_allowed in [runners.kubernetes]) — this
-# is set in .dev/helmfile.yaml.gotmpl. Without it KUBERNETES_CPU_LIMIT is
-# ignored, the pod has no CPU quota, and CFS throttling never occurs.
+# NOTE: for jobs 1, 4 and 5 to actually throttle, the Kubernetes runner must
+# allow the matching overwrite (cpu_*, helper_*, service_*_overwrite_max_allowed
+# in [runners.kubernetes]) — all are set in .dev/helmfile.yaml.gotmpl. Without
+# them KUBERNETES_*_CPU_LIMIT is ignored, the container has no CPU quota, and
+# CFS throttling never occurs.
 
 workflow:
   rules:
@@ -97,3 +105,74 @@ network-only:
         sleep 0.3                                          # keep CPU idle
       done
       echo "made $n API calls"
+
+# 4. Starve the helper while leaving the build container comfortable. The helper
+#    does git clone, artifact upload/download and cache, so capping it at 50m
+#    throttles the parts of the job that never show up in script time. The
+#    artifact below gives the helper real work to do on upload.
+helper-throttle:
+  stage: load
+  variables:
+    KUBERNETES_CPU_REQUEST: "500m"
+    KUBERNETES_CPU_LIMIT: "1"
+    KUBERNETES_MEMORY_REQUEST: "128Mi"
+    KUBERNETES_MEMORY_LIMIT: "256Mi"
+    # The point of this job: a helper with almost no CPU.
+    KUBERNETES_HELPER_CPU_REQUEST: "25m"
+    KUBERNETES_HELPER_CPU_LIMIT: "50m"
+    KUBERNETES_HELPER_MEMORY_REQUEST: "64Mi"
+    KUBERNETES_HELPER_MEMORY_LIMIT: "128Mi"
+    GIT_DEPTH: "0"        # full clone: more work for the throttled helper
+    GIT_STRATEGY: clone   # never reuse a cached workdir
+  script:
+    - |
+      echo "Generating ~60MB of artifacts for the throttled helper to upload"
+      mkdir -p artifacts
+      for i in $(seq 1 12); do
+        head -c 5000000 /dev/urandom > "artifacts/blob-$i.bin"
+      done
+      echo "build container itself stays idle"
+      sleep 20
+  artifacts:
+    paths:
+      - artifacts/
+    expire_in: 1 hour
+
+# 5. Run a service container so the build pod has an `svc-0` alongside build and
+#    helper. postgres is cheap and starts fast; capping the service CPU makes it
+#    throttle while it initialises its data directory.
+with-services:
+  stage: load
+  services:
+    # Two naming forms on purpose: an aliased service takes the alias as its
+    # k8s container name (`db`), an un-aliased one falls back to positional
+    # `svc-N`. cigar must classify both as service containers.
+    - name: postgres:16-alpine
+      alias: db
+    - name: redis:7-alpine
+  variables:
+    POSTGRES_PASSWORD: devpassword
+    POSTGRES_DB: loadtest
+    KUBERNETES_CPU_REQUEST: "100m"
+    KUBERNETES_CPU_LIMIT: "500m"
+    KUBERNETES_MEMORY_REQUEST: "128Mi"
+    KUBERNETES_MEMORY_LIMIT: "256Mi"
+    # Squeeze the service so initdb spends its periods throttled.
+    KUBERNETES_SERVICE_CPU_REQUEST: "25m"
+    KUBERNETES_SERVICE_CPU_LIMIT: "50m"
+    KUBERNETES_SERVICE_MEMORY_REQUEST: "128Mi"
+    KUBERNETES_SERVICE_MEMORY_LIMIT: "256Mi"
+  script:
+    - |
+      apk add --no-cache postgresql-client >/dev/null
+      echo "Waiting for the throttled postgres service to come up"
+      for i in $(seq 1 60); do
+        if pg_isready -h db -U postgres >/dev/null 2>&1; then
+          echo "postgres ready after ${i}s"
+          break
+        fi
+        sleep 1
+      done
+      PGPASSWORD=$POSTGRES_PASSWORD psql -h db -U postgres -d loadtest \
+        -c "select count(*) from generate_series(1, 200000);" || true
+      sleep 30

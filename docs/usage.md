@@ -269,7 +269,7 @@ A GitLab Kubernetes runner pod runs more than the job's script:
 |---|---|---|
 | `build` | the job's `script:` | `KUBERNETES_CPU_REQUEST` / `KUBERNETES_CPU_LIMIT` |
 | `helper` | git clone, artifacts, cache | `KUBERNETES_HELPER_CPU_REQUEST` / `KUBERNETES_HELPER_CPU_LIMIT` |
-| `svc-N` | one per CI `services:` entry | `KUBERNETES_SERVICE_CPU_REQUEST` / `KUBERNETES_SERVICE_CPU_LIMIT` (all services at once) |
+| _service_ | one per CI `services:` entry — named after its `alias:` when the job sets one (`alias: db` → a container called `db`), otherwise positional `svc-N` | `KUBERNETES_SERVICE_CPU_REQUEST` / `KUBERNETES_SERVICE_CPU_LIMIT` (all services at once) |
 
 (The memory equivalents follow the same naming: `KUBERNETES_MEMORY_LIMIT`,
 `KUBERNETES_HELPER_MEMORY_LIMIT`, `KUBERNETES_SERVICE_MEMORY_LIMIT`, …)

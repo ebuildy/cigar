@@ -44,9 +44,30 @@ func (c ContainerUsage) ThrottledRatio() (float64, bool) {
 	return c.ThrottledPeriods / c.Periods, true
 }
 
-// containerRank orders the breakdown: build first, then helper, then svc-N by
-// ascending index, then anything else. Prometheus returns vector samples in no
-// guaranteed order and golden files need a stable one.
+// runnerInitContainers are the init containers the Kubernetes executor injects
+// into a build pod. They are runner plumbing, not the job's workload: they run
+// before the job starts, their usage is negligible, and no CI variable tunes
+// them — so they are dropped from the breakdown rather than shown as a row the
+// reader can act on.
+var runnerInitContainers = map[string]bool{
+	"init-permissions": true,
+	"permissions":      true,
+	"svc-0-init":       true,
+}
+
+// IsRunnerInitContainer reports whether name is a runner-injected init
+// container. Exported for the advice package, which must never suggest tuning
+// one.
+func IsRunnerInitContainer(name string) bool { return runnerInitContainers[name] }
+
+// containerRank orders the breakdown: build first, then helper, then the job's
+// service containers, then anything else. Prometheus returns vector samples in
+// no guaranteed order and golden files need a stable one.
+//
+// A service is named after its `alias:` when the job sets one and only falls
+// back to positional `svc-N` when it does not — a job with `alias: db` produces
+// a container literally called `db`. Un-aliased `svc-N` sorts numerically so
+// svc-2 precedes svc-10; everything else sorts by name.
 func containerRank(name string) (group, index int) {
 	switch {
 	case name == "build":

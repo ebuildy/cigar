@@ -148,6 +148,20 @@ releases:
                 cpu_request_overwrite_max_allowed = "2"
                 memory_limit_overwrite_max_allowed = "1Gi"
                 memory_request_overwrite_max_allowed = "1Gi"
+                # Same, for the other two containers of a build pod. Without
+                # these, KUBERNETES_HELPER_CPU_LIMIT / KUBERNETES_SERVICE_CPU_LIMIT
+                # are silently ignored, those containers get no quota and never
+                # CFS-throttle — so the helper-throttle and service jobs in
+                # .dev/fixtures/load-test.gitlab-ci.yml could not exercise
+                # cigar's per-container advice.
+                helper_cpu_limit_overwrite_max_allowed = "2"
+                helper_cpu_request_overwrite_max_allowed = "2"
+                helper_memory_limit_overwrite_max_allowed = "1Gi"
+                helper_memory_request_overwrite_max_allowed = "1Gi"
+                service_cpu_limit_overwrite_max_allowed = "2"
+                service_cpu_request_overwrite_max_allowed = "2"
+                service_memory_limit_overwrite_max_allowed = "1Gi"
+                service_memory_request_overwrite_max_allowed = "1Gi"
                 # The runner's own arch auto-detection resolves to
                 # "x86_64-<version>" even when running arm64 (observed on
                 # kind/Apple Silicon) — pin explicitly rather than rely on

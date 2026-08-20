@@ -86,3 +86,34 @@ func TestSumContainersLeavesRatioUnsetWithoutPeriods(t *testing.T) {
 		t.Errorf("ThrottledRatio = %v, want 0 (absent, not measured)", u.ThrottledRatio)
 	}
 }
+
+func TestSortedContainersWithAliasedService(t *testing.T) {
+	// A service takes its `alias:` as the container name and only falls back to
+	// svc-N when un-aliased. Both forms must sort after build and helper.
+	acc := map[string]*ContainerUsage{
+		"db":     {Name: "db"},
+		"svc-1":  {Name: "svc-1"},
+		"helper": {Name: "helper"},
+		"build":  {Name: "build"},
+	}
+	got := sortedContainers(acc)
+	want := []string{"build", "helper", "svc-1", "db"}
+	for i, name := range want {
+		if got[i].Name != name {
+			t.Errorf("position %d = %q, want %q", i, got[i].Name, name)
+		}
+	}
+}
+
+func TestIsRunnerInitContainer(t *testing.T) {
+	for _, name := range []string{"init-permissions", "permissions", "svc-0-init"} {
+		if !IsRunnerInitContainer(name) {
+			t.Errorf("IsRunnerInitContainer(%q) = false, want true", name)
+		}
+	}
+	for _, name := range []string{"build", "helper", "db", "svc-0"} {
+		if IsRunnerInitContainer(name) {
+			t.Errorf("IsRunnerInitContainer(%q) = true, want false", name)
+		}
+	}
+}

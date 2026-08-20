@@ -176,6 +176,11 @@ func (s *PromSource) vector(ctx context.Context, query string, ts time.Time) (ma
 			// attribute it to.
 			continue
 		}
+		if IsRunnerInitContainer(name) {
+			// Runner plumbing that runs before the job: no CI variable tunes
+			// it and its usage is noise in the breakdown.
+			continue
+		}
 		out[name] = float64(sm.Value)
 	}
 	return out, nil

@@ -16,7 +16,7 @@ It receives GitLab **Pipeline event** webhooks, queries **Prometheus** (cadvisor
 
 - **Pipeline totals** — wall-clock duration (earliest start → latest finish), total memory (sum of job peaks), peak memory, CPU time consumed, network RX/TX, disk read/write.
 - **Per-job table** — job name, CPU time, peak memory, memory request/limit, CPU request/limit, throttled %, network, disk read/write.
-- **Per-container breakdown** — a runner pod is not one container: `build` runs your script, `helper` does git clone / artifacts / cache, and each CI `services:` entry gets an `svc-N`. Small pipelines get a `↳` row per container under each job; larger ones keep the table short and serve the same split via `details <job>`.
+- **Per-container breakdown** — a runner pod is not one container: `build` runs your script, `helper` does git clone / artifacts / cache, and each CI `services:` entry gets its own (named after its `alias:`, or `svc-N` when un-aliased). Small pipelines get a `↳` row per container under each job; larger ones keep the table short and serve the same split via `details <job>`.
 - **⚠️ CPU throttling warnings** when `throttled_periods / periods` exceeds the threshold (default 25 %), raised **per container**, each with the CI variables that actually govern it: `KUBERNETES_CPU_*` for the build container, `KUBERNETES_HELPER_CPU_*` for the helper, `KUBERNETES_SERVICE_CPU_*` for services.
 - **Right-sizing hints** — over-provisioning advice when usage ≪ requests, OOM-risk warning when peak memory is near the limit.
 

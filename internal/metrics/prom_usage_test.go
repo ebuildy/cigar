@@ -179,3 +179,43 @@ func TestPodUsageAbsentSeriesLeavesTotalsUnset(t *testing.T) {
 		t.Errorf("absent series must leave totals unset, got %+v", u)
 	}
 }
+
+func TestPodUsageDropsInitContainers(t *testing.T) {
+	// gitlab-runner injects init-permissions into every build pod. It runs
+	// before the job, no CI variable tunes it, and it must not appear as a row
+	// the reader could act on — nor inflate the totals.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.FormValue("query"), "container_network_") {
+			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[` +
+			`{"metric":{"container":"build"},"value":[1752912000,"10"]},` +
+			`{"metric":{"container":"init-permissions"},"value":[1752912000,"5"]},` +
+			`{"metric":{"container":"db"},"value":[1752912000,"3"]}]}}`))
+	}))
+	t.Cleanup(srv.Close)
+	src, err := NewPromSource(srv.URL, 30*time.Second, zap.NewNop(), nil)
+	if err != nil {
+		t.Fatalf("NewPromSource: %v", err)
+	}
+	start := time.Unix(1752912000, 0)
+	u, err := src.PodUsage(t.Context(), "runner-x", start, start.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("PodUsage: %v", err)
+	}
+	var names []string
+	for _, c := range u.Containers {
+		names = append(names, c.Name)
+	}
+	if len(names) != 2 || names[0] != "build" || names[1] != "db" {
+		t.Fatalf("containers = %v, want [build db]", names)
+	}
+	// 10 + 3, with init-permissions' 5 excluded from the total too — the total
+	// must stay the sum of the rows shown.
+	if u.CPUSeconds != 13 {
+		t.Errorf("CPUSeconds = %v, want 13 (init container excluded)", u.CPUSeconds)
+	}
+}

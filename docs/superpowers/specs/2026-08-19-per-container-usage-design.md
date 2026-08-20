@@ -8,7 +8,9 @@ A GitLab Kubernetes runner pod is not one container. It runs:
 
 - `build` — the job's own `script:`,
 - `helper` — the runner's plumbing: git clone, artifacts, cache upload/download,
-- `svc-0`, `svc-1`, … — one container per CI `services:` entry (dind, postgres…).
+- one container per CI `services:` entry (dind, postgres…), named after the
+  entry's `alias:` when the job sets one and positional `svc-N` otherwise,
+- and, injected by the runner, an `init-permissions` init container.
 
 Today every number in the report is a `sum()` over all of them, so a job row
 silently mixes the user's work with the runner's plumbing. Worse, a helper
@@ -38,9 +40,10 @@ advice name the container it is about, with the right GitLab CI variable.
   stop matching what the cluster was asked for.
 - **Per-container memory-pressure advice.** `memory-pressure` stays job-level.
   Only CPU throttling gained a per-container signal worth acting on.
-- **Mapping `svc-0` to its image.** cadvisor labels service containers
-  positionally; recovering `postgres:16` from `svc-0` needs the job's CI config.
-  The table renders the cadvisor name verbatim.
+- **Mapping an un-aliased `svc-N` to its image.** Recovering `postgres:16` from
+  `svc-0` needs the job's CI config. The table renders the cadvisor name
+  verbatim. (An *aliased* service needs no mapping — its container is already
+  named after the alias.)
 - **Per-container network.** cadvisor's `container_network_*` series are
   pod-level (no `container` label). Container rows render `—` for network, never
   a fabricated zero.
@@ -53,7 +56,7 @@ advice name the container it is about, with the right GitLab CI variable.
 // ContainerUsage is one container's slice of a runner pod's usage.
 // Network is absent by construction: cadvisor's network series are pod-level.
 type ContainerUsage struct {
-	Name string // cadvisor `container` label: build, helper, svc-0…
+	Name string // cadvisor `container` label: build, helper, db, svc-0…
 
 	CPUSeconds      float64
 	PeakMemoryBytes uint64
@@ -79,9 +82,10 @@ func (c ContainerUsage) ThrottledRatio() (float64, bool)
 `JobUsage` gains one field:
 
 ```go
-// Containers is the per-container breakdown, ordered build, helper, svc-N
-// ascending, then any other name alphabetically. Empty when the container-level
-// series were absent; the totals above are then all that is known.
+// Containers is the per-container breakdown, ordered build, helper, un-aliased
+// svc-N ascending, then any other name alphabetically. Runner init containers
+// are excluded. Empty when the container-level series were absent; the totals
+// above are then all that is known.
 Containers []ContainerUsage
 ```
 
@@ -127,9 +131,10 @@ container that reports memory but not disk gets a row with disk unset.
 
 ### Container ordering
 
-`build`, then `helper`, then `svc-*` by ascending numeric suffix, then anything
-else alphabetically. Stable order is a golden-file requirement — Prometheus
-returns vector samples in no guaranteed order.
+`build`, then `helper`, then un-aliased `svc-N` by ascending numeric suffix,
+then anything else (alias-named services) alphabetically. Stable order is a
+golden-file requirement — Prometheus returns vector samples in no guaranteed
+order.
 
 ## `internal/report`
 
@@ -152,7 +157,7 @@ table row too, and the threshold is about the table's height.
 | build : compile | 42.5 s | 412.0 MiB | 256.0 MiB / 512.0 MiB | 250m / 500m | **41%** ⚠️ | 8.0 MiB / 3.0 MiB | 600.0 MiB / 220.0 MiB |
 | ↳ build | 39.8 s | 380.0 MiB | 128.0 MiB / 256.0 MiB | 150m / 250m | 12% | — / — | 580.0 MiB / 200.0 MiB |
 | ↳ helper | 2.3 s | 24.0 MiB | 128.0 MiB / 256.0 MiB | 100m / 250m | **58%** ⚠️ | — / — | 20.0 MiB / 20.0 MiB |
-| ↳ svc-0 | 0.4 s | 8.0 MiB | — / — | — / — | 0% | — / — | — / — |
+| ↳ db | 0.4 s | 8.0 MiB | — / — | — / — | 0% | — / — | — / — |
 ```
 
 Container rows reuse the existing cell helpers (`dash` for absent series, the
@@ -198,12 +203,26 @@ The shared `throttled(f, t)` predicate stays as the fallback's guard.
 |---|---|---|
 | `build` | `KUBERNETES_CPU_REQUEST` | `KUBERNETES_CPU_LIMIT` |
 | `helper` | `KUBERNETES_HELPER_CPU_REQUEST` | `KUBERNETES_HELPER_CPU_LIMIT` |
-| `svc-*` | `KUBERNETES_SERVICE_CPU_REQUEST` | `KUBERNETES_SERVICE_CPU_LIMIT` |
-| anything else | `KUBERNETES_CPU_REQUEST` | `KUBERNETES_CPU_LIMIT` |
+| anything else | `KUBERNETES_SERVICE_CPU_REQUEST` | `KUBERNETES_SERVICE_CPU_LIMIT` |
+
+**Classification is by exclusion, and this is load-bearing.** An earlier draft
+of this spec matched services on a `svc-` prefix. Verified against the dev
+cluster (2026-08-20, pipeline 25), that is wrong: the Kubernetes executor names
+a service container after its `alias:` when the job sets one, and only falls
+back to positional `svc-N` when it does not. One pod running
+`postgres:16-alpine` aliased to `db` plus an un-aliased `redis:7-alpine`
+produced containers `build helper db svc-0`. A prefix test silently handed the
+`db` container the *build* variables. Since `build` and `helper` are the only
+names the executor fixes, everything else is a service.
 
 `KUBERNETES_SERVICE_*` applies to **every** service container — GitLab has no
-per-service variable — and the advice body says so when it fires for a `svc-*`
-container.
+per-service variable — and the advice body says so when it fires for one.
+
+Runner-injected init containers (`init-permissions`, observed on the same
+cluster) are dropped in `metrics`, before the breakdown is built: they run
+before the job, no CI variable tunes them, and a row the reader cannot act on
+is noise. They are excluded from the totals too, so the job row stays the sum
+of the rows shown.
 
 `suggestedCPULimit` / `suggestedCPURequest` are unchanged; they now take the
 container's own request/limit instead of the pod-wide sums, which is what makes

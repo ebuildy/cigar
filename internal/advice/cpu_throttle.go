@@ -3,6 +3,8 @@ package advice
 import (
 	"fmt"
 	"strings"
+
+	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/metrics"
 )
 
 // cpuThrottle advises raising the job's CPU allowance when the container spent
@@ -37,16 +39,33 @@ func (cpuThrottle) Check(f Facts, t Thresholds) []Advice {
 }
 
 // containerVars maps a runner-pod container to the GitLab CI variables that
-// govern its CPU. An empty or unrecognized container gets the build variables.
+// govern its CPU.
+//
+// Classification is by exclusion, because `build` and `helper` are the only
+// container names the Kubernetes executor fixes. A service container is named
+// after its `alias:` when the job sets one and only falls back to positional
+// `svc-N` when it does not — so `postgres:16` aliased to `db` lands in cadvisor
+// as `db`, and no prefix test can recognize it. Anything that is neither the
+// build nor the helper container is therefore a service.
+//
+// An empty container (no per-container breakdown available) means the finding
+// is about the pod as a whole, which is reported against the build variables.
 func containerVars(container string) (request, limit string) {
-	switch {
-	case container == "helper":
+	switch container {
+	case "helper":
 		return "KUBERNETES_HELPER_CPU_REQUEST", "KUBERNETES_HELPER_CPU_LIMIT"
-	case strings.HasPrefix(container, "svc-"):
-		return "KUBERNETES_SERVICE_CPU_REQUEST", "KUBERNETES_SERVICE_CPU_LIMIT"
-	default:
+	case "build", "":
 		return "KUBERNETES_CPU_REQUEST", "KUBERNETES_CPU_LIMIT"
+	default:
+		return "KUBERNETES_SERVICE_CPU_REQUEST", "KUBERNETES_SERVICE_CPU_LIMIT"
 	}
+}
+
+// isService reports whether a container of a runner build pod is one of the
+// job's `services:`. See containerVars for why this is decided by exclusion.
+func isService(container string) bool {
+	return container != "" && container != "build" && container != "helper" &&
+		!metrics.IsRunnerInitContainer(container)
 }
 
 // throttleAdvice renders one throttling finding. container is empty when no
@@ -70,7 +89,7 @@ func throttleAdvice(job, container string, ratio, requestCores, limitCores float
 	if container == "helper" {
 		b.WriteString("The helper container runs `git clone`, artifact upload/download and the cache. Throttling it stretches every job's setup and teardown without ever showing up in the job's own script time.\n\n")
 	}
-	if strings.HasPrefix(container, "svc-") {
+	if isService(container) {
 		b.WriteString("GitLab has no per-service variable: the settings below apply to **every** `services:` container of the job.\n\n")
 	}
 

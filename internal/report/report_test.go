@@ -398,9 +398,10 @@ func containerJob() JobReport {
 				ThrottledPeriods: 58, Periods: 100,
 				CPURequestCores: 0.1, CPULimitCores: 0.25,
 				MemoryRequestBytes: 128 * 1024 * 1024, MemoryLimitBytes: 256 * 1024 * 1024},
-			// No CFS series and no requests/limits: everything must render as
-			// an em dash, never as a measured 0%.
-			{Name: "svc-0", CPUSeconds: 0.4, PeakMemoryBytes: 8 * 1024 * 1024},
+			// An alias-named service (`services: [{name: postgres, alias: db}]`
+			// lands in cadvisor as `db`). No CFS series and no requests/limits:
+			// everything must render as an em dash, never as a measured 0%.
+			{Name: "db", CPUSeconds: 0.4, PeakMemoryBytes: 8 * 1024 * 1024},
 		},
 	}
 	u.SumForTest()

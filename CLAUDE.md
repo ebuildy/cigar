@@ -15,7 +15,7 @@ A Go service that receives GitLab **Pipeline events** webhooks, queries **Promet
 
 - Pipeline totals: wall-clock duration (max finish − min start across jobs), total memory (sum of job peaks), peak memory (max working set), CPU time consumed, network RX/TX, disk read/write.
 - Per-job table: job name | CPU time | peak memory | memory request/limit | CPU request/limit | throttled % | network | disk read/write.
-- Per-container rows (`↳ build`, `↳ helper`, `↳ svc-0`) nested under each job while the pipeline has at most `report.container_detail_max_jobs` jobs (default 10; 0 disables). A job row is always the pod total; the `details <job>` command serves the same table on demand, so large pipelines lose nothing.
+- Per-container rows (`↳ build`, `↳ helper`, `↳ db`) nested under each job while the pipeline has at most `report.container_detail_max_jobs` jobs (default 10; 0 disables). A job row is always the pod total; the `details <job>` command serves the same table on demand, so large pipelines lose nothing.
 - ⚠️ CPU throttling warning when `throttled_periods / periods > threshold` (default 25%), raised **once per throttled container**, each carrying the variables that govern that container: `KUBERNETES_CPU_*` (build), `KUBERNETES_HELPER_CPU_*` (helper), `KUBERNETES_SERVICE_CPU_*` (all services at once) — plus the memory equivalents. With no container breakdown available the rule falls back to the pod-level ratio and the build variables, byte-identical to its pre-breakdown output.
 - Advice when usage ≪ requests (over-provisioned) or peak memory near limit (OOM risk).
 

@@ -111,7 +111,9 @@ func TestCPUThrottlePerContainer(t *testing.T) {
 	u := &metrics.JobUsage{Containers: []metrics.ContainerUsage{
 		{Name: "build", ThrottledPeriods: 41, Periods: 100, CPURequestCores: 0.25, CPULimitCores: 0.5},
 		{Name: "helper", ThrottledPeriods: 58, Periods: 100, CPURequestCores: 0.1, CPULimitCores: 0.25},
-		{Name: "svc-0", ThrottledPeriods: 60, Periods: 100},
+		// An aliased service takes the alias as its container name; only an
+		// un-aliased one is svc-N. Both must be classified as services.
+		{Name: "db", ThrottledPeriods: 60, Periods: 100},
 		{Name: "svc-1", ThrottledPeriods: 1, Periods: 100}, // below threshold, quiet
 	}}
 	u.SumForTest()
@@ -124,7 +126,7 @@ func TestCPUThrottlePerContainer(t *testing.T) {
 	wantTitles := []string{
 		"⚠️ CPU throttling — build",
 		"⚠️ CPU throttling — helper",
-		"⚠️ CPU throttling — svc-0",
+		"⚠️ CPU throttling — db",
 	}
 	for i, want := range wantTitles {
 		if got[i].Title != want {
@@ -178,5 +180,42 @@ func TestCPUThrottleFallsBackWithoutBreakdown(t *testing.T) {
 	}
 	if !strings.HasPrefix(got[0].Body, "This job spent **41%** of its CPU periods throttled, against a limit of 500m.") {
 		t.Errorf("fallback body changed:\n%s", got[0].Body)
+	}
+}
+
+func TestContainerVarsClassification(t *testing.T) {
+	tests := []struct {
+		container string
+		request   string
+		limit     string
+	}{
+		{"build", "KUBERNETES_CPU_REQUEST", "KUBERNETES_CPU_LIMIT"},
+		{"helper", "KUBERNETES_HELPER_CPU_REQUEST", "KUBERNETES_HELPER_CPU_LIMIT"},
+		// Un-aliased service.
+		{"svc-0", "KUBERNETES_SERVICE_CPU_REQUEST", "KUBERNETES_SERVICE_CPU_LIMIT"},
+		// Aliased service — the real-world case a "svc-" prefix test misses.
+		{"db", "KUBERNETES_SERVICE_CPU_REQUEST", "KUBERNETES_SERVICE_CPU_LIMIT"},
+		{"postgres", "KUBERNETES_SERVICE_CPU_REQUEST", "KUBERNETES_SERVICE_CPU_LIMIT"},
+		// No breakdown: the finding is about the pod, reported as the build.
+		{"", "KUBERNETES_CPU_REQUEST", "KUBERNETES_CPU_LIMIT"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.container, func(t *testing.T) {
+			request, limit := containerVars(tt.container)
+			if request != tt.request || limit != tt.limit {
+				t.Errorf("containerVars(%q) = %s/%s, want %s/%s",
+					tt.container, request, limit, tt.request, tt.limit)
+			}
+		})
+	}
+}
+
+func TestIsServiceExcludesInitContainers(t *testing.T) {
+	// An init container is runner plumbing: no CI variable tunes it, so it must
+	// never be advised about as if it were a service.
+	for _, name := range []string{"init-permissions", "permissions", "svc-0-init"} {
+		if isService(name) {
+			t.Errorf("isService(%q) = true, want false", name)
+		}
 	}
 }
