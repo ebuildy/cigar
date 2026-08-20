@@ -88,6 +88,7 @@ config:
     throttleWarnRatio: "0.25"
     longJobDuration: "10m"
     memoryPressureRatio: "0.9"
+    containerDetailMaxJobs: 10
   commands:
     enabled: false
     chartFormat: png

@@ -35,6 +35,7 @@ var settings = []setting{
 	{"report.throttle_warn_ratio", "0.25", "Throttled-periods ratio above which a job gets a warning"},
 	{"report.long_job_duration", "10m", "Job duration above which advice suggests splitting the job"},
 	{"report.memory_pressure_ratio", "0.9", "Peak-memory-to-limit ratio above which OOMKill risk is warned"},
+	{"report.container_detail_max_jobs", "10", "Nest per-container rows in the report when the pipeline has at most this many jobs (0 disables)"},
 	{"commands.enabled", "false", "Enable interactive report commands"},
 	{"commands.chart_format", "png", "Chart format for command replies: png, svg or markdown"},
 	{"server.listen_addr", ":8080", "Webhook listen address"},
@@ -53,22 +54,23 @@ func flagName(key string) string {
 }
 
 type Config struct {
-	WebhookSecret       string
-	WebhookSigningToken string
-	AuthMethod          string
-	GitLabURL           string
-	GitLabToken         string
-	PrometheusURL       string
-	ThrottleWarnRatio   float64
-	LongJobDuration     time.Duration
-	MemoryPressureRatio float64
-	ScrapeInterval      time.Duration
-	ListenAddr          string
-	OpsAddr             string
-	PodResolver         string
-	CommandsEnabled     bool
-	CommandsSigningKey  string
-	ChartFormat         string
+	WebhookSecret          string
+	WebhookSigningToken    string
+	AuthMethod             string
+	GitLabURL              string
+	GitLabToken            string
+	PrometheusURL          string
+	ThrottleWarnRatio      float64
+	LongJobDuration        time.Duration
+	MemoryPressureRatio    float64
+	ContainerDetailMaxJobs int
+	ScrapeInterval         time.Duration
+	ListenAddr             string
+	OpsAddr                string
+	PodResolver            string
+	CommandsEnabled        bool
+	CommandsSigningKey     string
+	ChartFormat            string
 }
 
 // New returns an env-only viper: defaults set and each key bound to its env var.
@@ -162,6 +164,9 @@ func Load(v *viper.Viper) (*Config, error) {
 	if cfg.MemoryPressureRatio, err = parseRatio(v.GetString("report.memory_pressure_ratio"), "REPORT_MEMORY_PRESSURE_RATIO", false); err != nil {
 		return nil, err
 	}
+	if cfg.ContainerDetailMaxJobs, err = parseInt(v.GetString("report.container_detail_max_jobs"), "REPORT_CONTAINER_DETAIL_MAX_JOBS"); err != nil {
+		return nil, err
+	}
 	if cfg.ScrapeInterval, err = parseDuration(v.GetString("prometheus.scrape_interval"), "PROMETHEUS_SCRAPE_INTERVAL"); err != nil {
 		return nil, err
 	}
@@ -225,6 +230,15 @@ func parseDuration(raw, label string) (time.Duration, error) {
 		return 0, fmt.Errorf("%s must be a positive duration, got %q", label, raw)
 	}
 	return d, nil
+}
+
+// parseInt parses a non-negative integer setting.
+func parseInt(raw, label string) (int, error) {
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative integer, got %q", label, raw)
+	}
+	return n, nil
 }
 
 func parseBool(raw, label string) (bool, error) {

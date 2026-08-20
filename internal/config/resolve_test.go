@@ -104,3 +104,20 @@ func TestResolveNoFileFallsBackToEnv(t *testing.T) {
 		t.Fatalf("got %q, want env value 0.42", got)
 	}
 }
+
+func TestResolveContainerDetailMaxJobsPrecedence(t *testing.T) {
+	file := writeConfig(t, "report:\n  container_detail_max_jobs: 3\n")
+	t.Setenv("REPORT_CONTAINER_DETAIL_MAX_JOBS", "7")
+
+	root := newTestRoot("--config", file, "--report-container-detail-max-jobs", "9")
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	v, err := Resolve(root)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got := v.GetString("report.container_detail_max_jobs"); got != "9" {
+		t.Fatalf("got %q, want flag value 9 (flag beats env and file)", got)
+	}
+}

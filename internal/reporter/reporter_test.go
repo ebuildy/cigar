@@ -304,3 +304,18 @@ func TestBuild(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildPassesContainerDetailMaxJobs(t *testing.T) {
+	r := &Reporter{
+		GitLab:                 &fakeGitLab{},
+		ContainerDetailMaxJobs: 4,
+		Log:                    zap.NewNop(),
+	}
+	data, err := r.Build(t.Context(), 1, 2)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if data.ContainerDetailMaxJobs != 4 {
+		t.Errorf("ContainerDetailMaxJobs = %d, want 4", data.ContainerDetailMaxJobs)
+	}
+}

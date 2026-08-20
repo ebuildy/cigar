@@ -21,7 +21,12 @@ type Reporter struct {
 	Resolver          correlate.Resolver
 	Metrics           metrics.Source
 	ThrottleWarnRatio float64
-	Log               *zap.Logger
+
+	// ContainerDetailMaxJobs is forwarded to report.Data: the job-count ceiling
+	// under which the report nests per-container rows.
+	ContainerDetailMaxJobs int
+
+	Log *zap.Logger
 
 	// SigningKey signs the note marker so command replies can trust the report's
 	// pipeline/MR. Empty for `bot run` (no commands).
@@ -84,7 +89,11 @@ func (r *Reporter) Build(ctx context.Context, projectID, pipelineID int64) (repo
 	r.Log.Debug("listed pipeline jobs",
 		zap.Int64("project_id", projectID), zap.Int64("pipeline_id", pipelineID), zap.Int("jobs", len(jobs)))
 
-	data := report.Data{PipelineID: pipelineID, ThrottleWarnRatio: r.ThrottleWarnRatio}
+	data := report.Data{
+		PipelineID:             pipelineID,
+		ThrottleWarnRatio:      r.ThrottleWarnRatio,
+		ContainerDetailMaxJobs: r.ContainerDetailMaxJobs,
+	}
 	for _, job := range jobs {
 		if !job.StartedAt.IsZero() && !job.FinishedAt.IsZero() {
 			data.RanJobs++

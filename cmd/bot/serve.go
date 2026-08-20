@@ -104,6 +104,7 @@ func serve(ctx context.Context) error {
 		zap.String("prometheus_url", cfg.PrometheusURL),
 		zap.String("auth_method", cfg.AuthMethod),
 		zap.Float64("throttle_warn_ratio", cfg.ThrottleWarnRatio),
+		zap.Int("container_detail_max_jobs", cfg.ContainerDetailMaxJobs),
 		zap.Duration("scrape_interval", cfg.ScrapeInterval))
 
 	rep, err := newReporter(cfg, log, m)

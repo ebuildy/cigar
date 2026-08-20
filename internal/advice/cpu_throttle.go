@@ -3,6 +3,8 @@ package advice
 import (
 	"fmt"
 	"strings"
+
+	"gitlab.com/ebuildy/gitlab-ci-resources-bot/internal/metrics"
 )
 
 // cpuThrottle advises raising the job's CPU allowance when the container spent
@@ -12,31 +14,93 @@ type cpuThrottle struct{}
 func (cpuThrottle) Name() string { return "cpu-throttle" }
 
 func (cpuThrottle) Check(f Facts, t Thresholds) []Advice {
-	if !throttled(f, t) {
+	if f.Usage == nil || t.ThrottleWarnRatio <= 0 {
 		return nil
 	}
-	u := f.Usage
+	// No breakdown (container-level series absent): fall back to the pod-level
+	// ratio and the build container's variables — what this rule did before
+	// per-container usage existed.
+	if len(f.Usage.Containers) == 0 {
+		if !throttled(f, t) {
+			return nil
+		}
+		return []Advice{throttleAdvice(f.Name, "", f.Usage.ThrottledRatio,
+			f.Usage.CPURequestCores, f.Usage.CPULimitCores)}
+	}
+	var out []Advice
+	for _, c := range f.Usage.Containers {
+		r, ok := c.ThrottledRatio()
+		if !ok || r < t.ThrottleWarnRatio {
+			continue
+		}
+		out = append(out, throttleAdvice(f.Name, c.Name, r, c.CPURequestCores, c.CPULimitCores))
+	}
+	return out
+}
 
+// containerVars maps a runner-pod container to the GitLab CI variables that
+// govern its CPU.
+//
+// Classification is by exclusion, because `build` and `helper` are the only
+// container names the Kubernetes executor fixes. A service container is named
+// after its `alias:` when the job sets one and only falls back to positional
+// `svc-N` when it does not — so `postgres:16` aliased to `db` lands in cadvisor
+// as `db`, and no prefix test can recognize it. Anything that is neither the
+// build nor the helper container is therefore a service.
+//
+// An empty container (no per-container breakdown available) means the finding
+// is about the pod as a whole, which is reported against the build variables.
+func containerVars(container string) (request, limit string) {
+	switch container {
+	case "helper":
+		return "KUBERNETES_HELPER_CPU_REQUEST", "KUBERNETES_HELPER_CPU_LIMIT"
+	case "build", "":
+		return "KUBERNETES_CPU_REQUEST", "KUBERNETES_CPU_LIMIT"
+	default:
+		return "KUBERNETES_SERVICE_CPU_REQUEST", "KUBERNETES_SERVICE_CPU_LIMIT"
+	}
+}
+
+// isService reports whether a container of a runner build pod is one of the
+// job's `services:`. See containerVars for why this is decided by exclusion.
+func isService(container string) bool {
+	return container != "" && container != "build" && container != "helper" &&
+		!metrics.IsRunnerInitContainer(container)
+}
+
+// throttleAdvice renders one throttling finding. container is empty when no
+// breakdown was available and the finding is about the pod as a whole.
+func throttleAdvice(job, container string, ratio, requestCores, limitCores float64) Advice {
 	var b strings.Builder
-	fmt.Fprintf(&b, "This job spent **%.0f%%** of its CPU periods throttled", u.ThrottledRatio*100)
-	if u.CPULimitCores > 0 {
-		fmt.Fprintf(&b, ", against a limit of %s", millicores(u.CPULimitCores))
+
+	subject, title := "This job", "⚠️ CPU throttling"
+	if container != "" {
+		subject = fmt.Sprintf("The `%s` container", container)
+		title = fmt.Sprintf("⚠️ CPU throttling — %s", container)
+	}
+	fmt.Fprintf(&b, "%s spent **%.0f%%** of its CPU periods throttled", subject, ratio*100)
+	if limitCores > 0 {
+		fmt.Fprintf(&b, ", against a limit of %s", millicores(limitCores))
 	} else {
 		b.WriteString(" (no CPU limit series was found for this pod)")
 	}
 	b.WriteString(". The runner had less CPU than the job asked for, so wall-clock time is inflated.\n\n")
+
+	if container == "helper" {
+		b.WriteString("The helper container runs `git clone`, artifact upload/download and the cache. Throttling it stretches every job's setup and teardown without ever showing up in the job's own script time.\n\n")
+	}
+	if isService(container) {
+		b.WriteString("GitLab has no per-service variable: the settings below apply to **every** `services:` container of the job.\n\n")
+	}
+
+	request, limit := containerVars(container)
 	b.WriteString("Raise the allowance with GitLab CI variables, on the job or on the project:\n\n")
 	b.WriteString("```yaml\nvariables:\n")
-	fmt.Fprintf(&b, "  KUBERNETES_CPU_REQUEST: %q\n", suggestedCPURequest(u.CPURequestCores, u.CPULimitCores))
-	fmt.Fprintf(&b, "  KUBERNETES_CPU_LIMIT: %q\n", suggestedCPULimit(u.CPULimitCores))
+	fmt.Fprintf(&b, "  %s: %q\n", request, suggestedCPURequest(requestCores, limitCores))
+	fmt.Fprintf(&b, "  %s: %q\n", limit, suggestedCPULimit(limitCores))
 	b.WriteString("```\n")
 
-	return []Advice{{
-		Job:   f.Name,
-		Rule:  "cpu-throttle",
-		Title: "⚠️ CPU throttling",
-		Body:  b.String(),
-	}}
+	return Advice{Job: job, Rule: "cpu-throttle", Title: title, Body: b.String()}
 }
 
 // suggestedCPULimitMillis doubles the current limit, rounded up to the next

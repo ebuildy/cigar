@@ -56,3 +56,9 @@ func TestHelpTextListsAdvise(t *testing.T) {
 		}
 	}
 }
+
+func TestHelpTextMentionsContainers(t *testing.T) {
+	if !strings.Contains(HelpText, "container") {
+		t.Errorf("HelpText should say details includes the container breakdown:\n%s", HelpText)
+	}
+}

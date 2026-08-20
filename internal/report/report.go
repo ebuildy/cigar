@@ -39,6 +39,12 @@ type Data struct {
 	// throttling warning with KUBERNETES_CPU_REQUEST/LIMIT advice.
 	ThrottleWarnRatio float64
 
+	// ContainerDetailMaxJobs nests one row per runner-pod container (build,
+	// helper, svc-N) under each job, but only while the pipeline has at most
+	// this many jobs — the breakdown multiplies a large table's height. 0
+	// disables it; the `details` command still serves the breakdown on demand.
+	ContainerDetailMaxJobs int
+
 	// RanJobs is how many jobs actually executed (had start and finish times).
 	// When it is > 0 but no job produced usage — every runner pod failed to
 	// correlate — Render emits a "no resource data" error notice instead of an
@@ -59,6 +65,12 @@ func (d Data) hasUsage() bool {
 		}
 	}
 	return false
+}
+
+// showContainers reports whether the Details table should nest per-container
+// rows: the breakdown is enabled and the table is short enough to stay readable.
+func (d Data) showContainers() bool {
+	return d.ContainerDetailMaxJobs > 0 && len(d.Jobs) <= d.ContainerDetailMaxJobs
 }
 
 // totals aggregates resource usage across every job that has usage data.
@@ -152,6 +164,12 @@ func Render(d Data) (string, error) {
 	b.WriteString("|---|---|---|---|---|---|---|---|\n")
 	for _, j := range d.Jobs {
 		row(&b, j, d.ThrottleWarnRatio)
+		// A single-container breakdown only repeats the job row above it.
+		if d.showContainers() && j.Usage != nil && len(j.Usage.Containers) > 1 {
+			for _, c := range j.Usage.Containers {
+				containerRow(&b, c, d.ThrottleWarnRatio, "↳ ")
+			}
+		}
 	}
 
 	return b.String(), nil
@@ -176,6 +194,50 @@ func row(b *strings.Builder, j JobReport, warnRatio float64) {
 		humanBytes(u.NetworkRxBytes), humanBytes(u.NetworkTxBytes),
 		optBytes(u.DiskReadBytes), optBytes(u.DiskWriteBytes),
 	)
+}
+
+// containerRow renders one container. prefix marks it as a child row in the
+// job table ("↳ ") and is empty in the standalone ContainerTable. Network is
+// always dashed: cadvisor's network series carry no container label, so it
+// cannot be attributed here — absent, not zero.
+func containerRow(b *strings.Builder, c metrics.ContainerUsage, warnRatio float64, prefix string) {
+	fmt.Fprintf(b, "| %s%s | %s | %s | %s / %s | %s / %s | %s | %s / %s | %s / %s |\n",
+		prefix, c.Name,
+		cpuTime(c.CPUSeconds),
+		humanBytes(c.PeakMemoryBytes),
+		optBytes(c.MemoryRequestBytes), optBytes(c.MemoryLimitBytes),
+		cores(c.CPURequestCores), cores(c.CPULimitCores),
+		containerThrottle(c, warnRatio),
+		dash, dash,
+		optBytes(c.DiskReadBytes), optBytes(c.DiskWriteBytes),
+	)
+}
+
+// containerThrottle renders a container's throttled percentage, or a dash when
+// its CFS period series was absent (absent ≠ 0%).
+func containerThrottle(c metrics.ContainerUsage, warnRatio float64) string {
+	r, ok := c.ThrottledRatio()
+	if !ok {
+		return dash
+	}
+	return throttle(r, warnRatio)
+}
+
+// ContainerTable renders a standalone per-container table for one job — the
+// `details` command reply. It shares containerRow with the report's nested
+// rows so the two renderings cannot drift. Returns "" when there is nothing to
+// show.
+func ContainerTable(containers []metrics.ContainerUsage, warnRatio float64) string {
+	if len(containers) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("| Container | CPU time | Peak memory | Mem req / limit | CPU req / limit | Throttled | Network RX / TX | Disk R / W |\n")
+	b.WriteString("|---|---|---|---|---|---|---|---|\n")
+	for _, c := range containers {
+		containerRow(&b, c, warnRatio, "")
+	}
+	return b.String()
 }
 
 // humanDuration renders a wall-clock span as compact minutes/seconds
