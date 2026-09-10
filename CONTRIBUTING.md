@@ -125,10 +125,11 @@ Pushing the tag is what triggers the release workflow ([.github/workflows/releas
 
 1. builds static `bot` binaries for linux/darwin × amd64/arm64, with the version stamped in (`bot --version`);
 2. packages tar.gz archives and a `checksums.txt`;
-3. generates GitHub release notes from the commit messages (`docs`/`test`/`chore`/`ci` prefixes are excluded there too) — separate from and in addition to the CHANGELOG.md file committed above;
-4. publishes it all as a GitHub release for the tag.
+3. builds a multi-arch (linux/amd64+arm64) container image from the already-built linux binaries (`Dockerfile.goreleaser` — no in-image build step, unlike `Dockerfile`) and pushes it to `ghcr.io/ebuildy/cigar:<version>` (also tagged `latest`), the image the Helm chart deploys by default;
+4. generates GitHub release notes from the commit messages (`docs`/`test`/`chore`/`ci` prefixes are excluded there too) — separate from and in addition to the CHANGELOG.md file committed above;
+5. publishes it all as a GitHub release for the tag.
 
-No credentials to set up: the workflow uses the repository's built-in `GITHUB_TOKEN`.
+No credentials to set up: the workflow uses the repository's built-in `GITHUB_TOKEN`, with `packages: write` permission for the GHCR push.
 
 ### Testing a release locally
 

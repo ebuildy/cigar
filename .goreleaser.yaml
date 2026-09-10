@@ -31,6 +31,32 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# Packages the linux binaries built above into the distroless image the Helm
+# chart already expects at ghcr.io/ebuildy/cigar (deploy/chart/cigar/values.yaml),
+# as one multi-platform manifest. dockers_v2 (not the deprecated `dockers` +
+# `docker_manifests` pair) — Dockerfile.goreleaser just copies the pre-built
+# binary in per platform, it doesn't compile (see that file's comment).
+dockers_v2:
+  - ids: [bot]
+    dockerfile: Dockerfile.goreleaser
+    images:
+      - ghcr.io/ebuildy/cigar
+    tags:
+      - "{{ .Version }}"
+      - latest
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.description: "Report CI pipeline resource usage on GitLab merge requests."
+      org.opencontainers.image.url: "{{ .GitURL }}"
+      org.opencontainers.image.source: "{{ .GitURL }}"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.created: "{{ .Date }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.licenses: MIT
+
 changelog:
   sort: asc
   filters:

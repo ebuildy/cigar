@@ -134,7 +134,7 @@ mise r release:tag    # compute next version from commits, tag it locally (no pu
 
 GitHub Actions runs the same mise tasks as local development (`.github/workflows/ci.yml`, on every push and PR): a `ci` job for lint → test → build, and a parallel `helm` job running `mise r helm:test` against the chart.
 
-Releases are handled by [GoReleaser](https://goreleaser.com): push a `v*` tag and `.github/workflows/release.yml` publishes a GitHub release with binaries for linux/darwin (amd64/arm64), archives, checksums and a changelog. The tag version is stamped into the binary (`bot --version`). `mise r release:tag` computes that version for you from Conventional Commits (`feat`→minor, `fix`/`perf`→patch, breaking→major) — see [CONTRIBUTING.md](CONTRIBUTING.md#releasing).
+Releases are handled by [GoReleaser](https://goreleaser.com): push a `v*` tag and `.github/workflows/release.yml` publishes a GitHub release with binaries for linux/darwin (amd64/arm64), archives, checksums and a changelog, and pushes a multi-arch image to `ghcr.io/ebuildy/cigar:<version>` (also tagged `latest`) — the image the Helm chart deploys by default. The tag version is stamped into the binary (`bot --version`). `mise r release:tag` computes that version for you from Conventional Commits (`feat`→minor, `fix`/`perf`→patch, breaking→major) — see [CONTRIBUTING.md](CONTRIBUTING.md#releasing).
 
 ### Definition of done
 
