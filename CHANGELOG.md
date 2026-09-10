@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here, generated from
 Conventional Commits by [git-cliff](https://git-cliff.org) — see `mise r changelog` / `mise r release:tag`.
+## [0.2.0] - 2026-09-10
+
+### 🚀 Features
+
+- *(release)* Publish a multi-arch container image to ghcr.io ([d51fb84])
+- *(ci)* Manual Tag Release button, restricted to main ([1bf6631])
 ## [0.1.0] - 2026-09-10
 
 ### 🚀 Features
