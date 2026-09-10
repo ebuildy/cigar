@@ -1,0 +1,67 @@
+# git-cliff configuration — https://git-cliff.org/docs/configuration
+#
+# Drives two mise tasks: `changelog` (regenerate CHANGELOG.md) and
+# `release:tag` (compute the next version and cut a tag), see .dev/scripts/release-tag.sh.
+#
+# Policy: only feat/fix/perf commits (plus any commit flagged as a breaking
+# change) are user-facing enough to appear in CHANGELOG.md or to move the
+# version — docs/chore/refactor/test/style/ci commits are invisible to both.
+# `filter_commits = true` is what makes that true for the *version bump* too:
+# git-cliff's own default bumps patch on any conventional commit, filtered or
+# not, so without it a docs-only span since the last tag would still bump.
+
+[changelog]
+header = """
+# Changelog
+
+All notable changes to this project are documented here, generated from
+Conventional Commits by [git-cliff](https://git-cliff.org) — see `mise r changelog` / `mise r release:tag`.
+"""
+body = """
+{% if version %}\
+    ## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+    ## [Unreleased]
+{% endif %}\
+{% for entry in commits | commit_groups(groups=commit_parsers_groups) %}
+    ### {{ entry.group | striptags | trim | upper_first }}
+    {% for commit in entry.commits %}
+        - {% if commit.scope %}*({{ commit.scope }})* {% endif %}\
+            {{ commit.message | upper_first }} ([{{ commit.id | truncate(length=7, end="") }}])\
+    {% endfor %}
+{% endfor %}
+"""
+trim = true
+footer = ""
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+# Drop skipped (docs/chore/...) commits from the commit list entirely, so
+# they're invisible to `--bumped-version` too, not just to the rendered body.
+filter_commits = true
+# Keep a breaking-change commit out of the skip bucket even when its type
+# would otherwise be skipped (e.g. a `chore!:` or a `docs:` with a
+# `BREAKING CHANGE:` footer) — rare, but it should still force a major bump.
+protect_breaking_commits = true
+sort_commits = "oldest"
+commit_parsers = [
+  { message = "^\\w+(\\([\\w.\\-]+\\))?!:", group = "<!-- 0 -->⚠️ Breaking Changes", breaking = true },
+  { body = "BREAKING CHANGE:", group = "<!-- 0 -->⚠️ Breaking Changes", breaking = true },
+  { message = "^feat", group = "<!-- 1 -->🚀 Features" },
+  { message = "^fix", group = "<!-- 2 -->🐛 Bug Fixes" },
+  { message = "^perf", group = "<!-- 3 -->⚡ Performance" },
+  { message = ".*", skip = true },
+]
+
+[bump]
+# feat -> minor, fix/perf -> patch (git-cliff's implicit default once
+# breaking/feat are ruled out), breaking -> major. No custom_*_increment_regex
+# needed: with the non-user-facing types filtered out above, "everything
+# else" only ever means fix/perf.
+features_always_bump_minor = true
+breaking_always_bump_major = true
+# Fallback when there is no tag yet (repo tags are all "v*", required by
+# .github/workflows/release.yml) — without this git-cliff's own fallback is
+# the unprefixed "0.1.0".
+initial_tag = "v0.1.0"

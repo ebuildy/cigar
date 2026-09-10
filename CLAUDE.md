@@ -128,13 +128,15 @@ mise r test:e2e       # only internal/e2e, verbose, cache-busted
 mise r lint           # golangci-lint run
 mise r docker         # multi-stage build, distroless/static final image, nonroot
 mise r release:snapshot  # local goreleaser snapshot (no publish), artifacts in dist/
+mise r changelog      # regenerate CHANGELOG.md from Conventional Commits (git-cliff, see cliff.toml)
+mise r release:tag    # compute next version from commits (feat=minor, fix/perf=patch, breaking=major), tag locally (no push)
 mise r helm:test      # helm lint + helm-unittest suites in deploy/chart/cigar/tests
 ```
 
 CI is GitHub Actions (`.github/workflows/`), running the mise tasks via `jdx/mise-action` so CI and local use the same pinned toolchain:
 
 - `ci.yml` — on push to main and PRs. Two parallel jobs: `ci` (lint → test with race, incl. e2e → build) and `helm` (`mise r helm:test`: `helm lint` + the helm-unittest suites).
-- `release.yml` — on `v*` tags: `goreleaser release` publishes binaries (linux/darwin × amd64/arm64), archives, checksums and changelog as a GitHub release. Config in `.goreleaser.yaml`; the version is stamped into `main.version` (`bot --version`).
+- `release.yml` — on `v*` tags: `goreleaser release` publishes binaries (linux/darwin × amd64/arm64), archives, checksums and changelog as a GitHub release, and pushes a multi-arch (linux/amd64+arm64) image to `ghcr.io/ebuildy/cigar:<version>` (also tagged `latest`) — the image the Helm chart's `image.repository` default expects. Config in `.goreleaser.yaml`; `dockers_v2` packages the already-cross-compiled `bot` binary via `Dockerfile.goreleaser` (no in-image build step, unlike `Dockerfile`). The version is stamped into `main.version` (`bot --version`).
 
 ## Deployment
 

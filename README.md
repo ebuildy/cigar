@@ -126,13 +126,15 @@ mise r lint           # golangci-lint run
 mise r run            # go run ./cmd/bot serve (export the env vars above first)
 mise r docker         # multi-stage build, distroless/static, nonroot
 mise r release:snapshot  # local goreleaser snapshot build (no publish)
+mise r changelog      # regenerate CHANGELOG.md from Conventional Commits
+mise r release:tag    # compute next version from commits, tag it locally (no push)
 ```
 
 ### CI & releases
 
 GitHub Actions runs the same mise tasks as local development (`.github/workflows/ci.yml`, on every push and PR): a `ci` job for lint → test → build, and a parallel `helm` job running `mise r helm:test` against the chart.
 
-Releases are handled by [GoReleaser](https://goreleaser.com): push a `v*` tag and `.github/workflows/release.yml` publishes a GitHub release with binaries for linux/darwin (amd64/arm64), archives, checksums and a changelog. The tag version is stamped into the binary (`bot --version`).
+Releases are handled by [GoReleaser](https://goreleaser.com): push a `v*` tag and `.github/workflows/release.yml` publishes a GitHub release with binaries for linux/darwin (amd64/arm64), archives, checksums and a changelog, and pushes a multi-arch image to `ghcr.io/ebuildy/cigar:<version>` (also tagged `latest`) — the image the Helm chart deploys by default. The tag version is stamped into the binary (`bot --version`). `mise r release:tag` computes that version for you from Conventional Commits (`feat`→minor, `fix`/`perf`→patch, breaking→major) — see [CONTRIBUTING.md](CONTRIBUTING.md#releasing).
 
 ### Definition of done
 

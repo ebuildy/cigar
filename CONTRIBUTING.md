@@ -111,21 +111,34 @@ CI (GitHub Actions, [.github/workflows/ci.yml](.github/workflows/ci.yml)) runs l
 
 ## Releasing
 
-Releases are fully automated with [GoReleaser](https://goreleaser.com) ([.goreleaser.yaml](.goreleaser.yaml)) and triggered by pushing a semver tag:
+The version is computed, not chosen: [git-cliff](https://git-cliff.org) reads the [Conventional Commits](https://www.conventionalcommits.org) since the last tag (or the whole history if there isn't one yet) and works out the next semver — `feat` → minor, `fix`/`perf` → patch, a breaking change (`feat!:`/`fix!:` or a `BREAKING CHANGE:` footer) → major. `docs`/`chore`/`refactor`/`test`/`style`/`ci` commits don't move the version. The policy lives in [cliff.toml](cliff.toml).
 
 ```sh
-git tag v0.2.0
-git push origin v0.2.0
+mise r changelog     # preview: regenerate CHANGELOG.md, no commit, no tag
+mise r release:tag   # compute the next version, commit CHANGELOG.md, tag it — locally, no push
+git push --follow-tags
 ```
 
-The release workflow ([.github/workflows/release.yml](.github/workflows/release.yml)) then:
+`release:tag` ([.dev/scripts/release-tag.sh](.dev/scripts/release-tag.sh)) refuses a dirty working tree and exits cleanly (no commit, no tag) if there's nothing feat/fix/perf/breaking to release. Nothing is pushed automatically — review the commit and tag, then push yourself.
+
+Pushing the tag is what triggers the release workflow ([.github/workflows/release.yml](.github/workflows/release.yml)), fully automated with [GoReleaser](https://goreleaser.com) ([.goreleaser.yaml](.goreleaser.yaml)):
 
 1. builds static `bot` binaries for linux/darwin × amd64/arm64, with the version stamped in (`bot --version`);
 2. packages tar.gz archives and a `checksums.txt`;
-3. generates a changelog from the commit messages (`docs`/`test`/`chore`/`ci` prefixes are excluded — one more reason to write [conventional-style](https://www.conventionalcommits.org) commit messages);
-4. publishes it all as a GitHub release for the tag.
+3. builds a multi-arch (linux/amd64+arm64) container image from the already-built linux binaries (`Dockerfile.goreleaser` — no in-image build step, unlike `Dockerfile`) and pushes it to `ghcr.io/ebuildy/cigar:<version>` (also tagged `latest`), the image the Helm chart deploys by default;
+4. generates GitHub release notes from the commit messages (`docs`/`test`/`chore`/`ci` prefixes are excluded there too) — separate from and in addition to the CHANGELOG.md file committed above;
+5. publishes it all as a GitHub release for the tag.
 
-No credentials to set up: the workflow uses the repository's built-in `GITHUB_TOKEN`.
+No credentials to set up: the workflow uses the repository's built-in `GITHUB_TOKEN`, with `packages: write` permission for the GHCR push.
+
+### Tagging from GitHub Actions
+
+Instead of running `release:tag` locally, you can trigger it from GitHub's UI: **Actions → Tag Release → Run workflow** ([.github/workflows/tag.yml](.github/workflows/tag.yml)) runs the same `mise r release:tag` and pushes the result.
+
+- **Restricted to `main`**: the job runs under the `release` [environment](https://github.com/ebuildy/cigar/settings/environments), whose deployment branch policy only allows the branch named `main`. GitHub still shows a branch picker for the button, but selecting anything else fails the job immediately rather than tagging that branch.
+- **Needs a `RELEASE_PAT` repo secret**: pushing with the default `GITHUB_TOKEN` would *not* trigger `release.yml` — GitHub doesn't let a `GITHUB_TOKEN`-authored push trigger other workflows, to prevent infinite loops. `tag.yml` pushes with a PAT instead so the tag push behaves exactly like a push from your machine. One-time setup:
+  1. [Create a fine-grained PAT](https://github.com/settings/personal-access-tokens/new) scoped to only the `ebuildy/cigar` repository, with **Contents: Read and write** permission and nothing else.
+  2. `gh secret set RELEASE_PAT --repo ebuildy/cigar` (pastes the token without it touching your shell history) — or add it via the repo's Settings → Secrets and variables → Actions.
 
 ### Testing a release locally
 

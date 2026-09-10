@@ -1,0 +1,18 @@
+# Used by `goreleaser release` (release.yml) and `mise r release:snapshot`
+# to package the release image, published to ghcr.io/ebuildy/cigar.
+#
+# Unlike Dockerfile (which compiles from source for the local `mise r
+# docker` task), goreleaser already cross-compiled `bot` for the target
+# GOOS/GOARCH in .goreleaser.yaml's `builds:` stanza and copies just that
+# binary into this build context — so there's no build stage here, only the
+# same distroless packaging as Dockerfile's final stage.
+FROM gcr.io/distroless/static-debian12:nonroot
+# dockers_v2 lays the per-platform binary out as <os>/<arch>/bot in the build
+# context (verified against the actual buildx context, not just docs) —
+# TARGETOS/TARGETARCH are buildx's automatic multi-platform build args.
+ARG TARGETOS
+ARG TARGETARCH
+COPY ${TARGETOS}/${TARGETARCH}/bot /bot
+EXPOSE 8080 8081
+ENTRYPOINT ["/bot"]
+CMD ["serve"]
