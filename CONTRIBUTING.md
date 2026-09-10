@@ -131,6 +131,15 @@ Pushing the tag is what triggers the release workflow ([.github/workflows/releas
 
 No credentials to set up: the workflow uses the repository's built-in `GITHUB_TOKEN`, with `packages: write` permission for the GHCR push.
 
+### Tagging from GitHub Actions
+
+Instead of running `release:tag` locally, you can trigger it from GitHub's UI: **Actions → Tag Release → Run workflow** ([.github/workflows/tag.yml](.github/workflows/tag.yml)) runs the same `mise r release:tag` and pushes the result.
+
+- **Restricted to `main`**: the job runs under the `release` [environment](https://github.com/ebuildy/cigar/settings/environments), whose deployment branch policy only allows the branch named `main`. GitHub still shows a branch picker for the button, but selecting anything else fails the job immediately rather than tagging that branch.
+- **Needs a `RELEASE_PAT` repo secret**: pushing with the default `GITHUB_TOKEN` would *not* trigger `release.yml` — GitHub doesn't let a `GITHUB_TOKEN`-authored push trigger other workflows, to prevent infinite loops. `tag.yml` pushes with a PAT instead so the tag push behaves exactly like a push from your machine. One-time setup:
+  1. [Create a fine-grained PAT](https://github.com/settings/personal-access-tokens/new) scoped to only the `ebuildy/cigar` repository, with **Contents: Read and write** permission and nothing else.
+  2. `gh secret set RELEASE_PAT --repo ebuildy/cigar` (pastes the token without it touching your shell history) — or add it via the repo's Settings → Secrets and variables → Actions.
+
 ### Testing a release locally
 
 Before tagging, you can validate the whole release build without publishing anything:

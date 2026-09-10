@@ -1,0 +1,45 @@
+name: Tag Release
+
+# Manual "Run workflow" button — computes the next version from Conventional
+# Commits (git-cliff, see cliff.toml / mise r release:tag) and pushes the tag.
+#
+# Restricted to main via the `release` environment's deployment branch
+# policy (github.com/ebuildy/cigar/settings/environments) — GitHub still
+# shows the branch picker for any branch, but the job is refused before it
+# starts unless the selected branch is exactly "main".
+#
+# Pushes with RELEASE_PAT rather than the default GITHUB_TOKEN: a push made
+# with GITHUB_TOKEN does not trigger other workflows (GitHub's own loop
+# prevention), so release.yml's `on: push: tags` would silently never fire.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tag-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # git-cliff needs full history to compute the version
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - uses: jdx/mise-action@v2
+
+      - name: Configure git identity for the release commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Compute next version, update CHANGELOG.md, create the tag
+        run: mise r release:tag
+
+      - name: Push the release commit and tag
+        run: git push --follow-tags

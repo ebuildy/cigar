@@ -32,7 +32,9 @@ echo "Next version: $version"
 git-cliff --tag "$version" -o CHANGELOG.md
 
 git add CHANGELOG.md
-git commit -q -m "chore(release): $version"
+# --signoff: this repo's DCO check requires it on every commit, including
+# this generated one (whether run locally or by .github/workflows/tag.yml).
+git commit -q -s -m "chore(release): $version"
 git tag -a "$version" -m "$version"
 
 echo "Committed CHANGELOG.md and created tag $version locally."
