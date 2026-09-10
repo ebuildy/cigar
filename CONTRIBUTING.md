@@ -111,18 +111,21 @@ CI (GitHub Actions, [.github/workflows/ci.yml](.github/workflows/ci.yml)) runs l
 
 ## Releasing
 
-Releases are fully automated with [GoReleaser](https://goreleaser.com) ([.goreleaser.yaml](.goreleaser.yaml)) and triggered by pushing a semver tag:
+The version is computed, not chosen: [git-cliff](https://git-cliff.org) reads the [Conventional Commits](https://www.conventionalcommits.org) since the last tag (or the whole history if there isn't one yet) and works out the next semver — `feat` → minor, `fix`/`perf` → patch, a breaking change (`feat!:`/`fix!:` or a `BREAKING CHANGE:` footer) → major. `docs`/`chore`/`refactor`/`test`/`style`/`ci` commits don't move the version. The policy lives in [cliff.toml](cliff.toml).
 
 ```sh
-git tag v0.2.0
-git push origin v0.2.0
+mise r changelog     # preview: regenerate CHANGELOG.md, no commit, no tag
+mise r release:tag   # compute the next version, commit CHANGELOG.md, tag it — locally, no push
+git push --follow-tags
 ```
 
-The release workflow ([.github/workflows/release.yml](.github/workflows/release.yml)) then:
+`release:tag` ([.dev/scripts/release-tag.sh](.dev/scripts/release-tag.sh)) refuses a dirty working tree and exits cleanly (no commit, no tag) if there's nothing feat/fix/perf/breaking to release. Nothing is pushed automatically — review the commit and tag, then push yourself.
+
+Pushing the tag is what triggers the release workflow ([.github/workflows/release.yml](.github/workflows/release.yml)), fully automated with [GoReleaser](https://goreleaser.com) ([.goreleaser.yaml](.goreleaser.yaml)):
 
 1. builds static `bot` binaries for linux/darwin × amd64/arm64, with the version stamped in (`bot --version`);
 2. packages tar.gz archives and a `checksums.txt`;
-3. generates a changelog from the commit messages (`docs`/`test`/`chore`/`ci` prefixes are excluded — one more reason to write [conventional-style](https://www.conventionalcommits.org) commit messages);
+3. generates GitHub release notes from the commit messages (`docs`/`test`/`chore`/`ci` prefixes are excluded there too) — separate from and in addition to the CHANGELOG.md file committed above;
 4. publishes it all as a GitHub release for the tag.
 
 No credentials to set up: the workflow uses the repository's built-in `GITHUB_TOKEN`.

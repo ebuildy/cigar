@@ -128,6 +128,8 @@ mise r test:e2e       # only internal/e2e, verbose, cache-busted
 mise r lint           # golangci-lint run
 mise r docker         # multi-stage build, distroless/static final image, nonroot
 mise r release:snapshot  # local goreleaser snapshot (no publish), artifacts in dist/
+mise r changelog      # regenerate CHANGELOG.md from Conventional Commits (git-cliff, see cliff.toml)
+mise r release:tag    # compute next version from commits (feat=minor, fix/perf=patch, breaking=major), tag locally (no push)
 mise r helm:test      # helm lint + helm-unittest suites in deploy/chart/cigar/tests
 ```
 
