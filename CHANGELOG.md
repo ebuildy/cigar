@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here, generated from
 Conventional Commits by [git-cliff](https://git-cliff.org) — see `mise r changelog` / `mise r release:tag`.
-## [Unreleased]
+## [0.1.0] - 2026-09-10
 
 ### 🚀 Features
 
@@ -58,6 +58,7 @@ Conventional Commits by [git-cliff](https://git-cliff.org) — see `mise r chang
 - Add metrics duration, disk io ([4417798])
 - Add prom metrics endpoint ([c8f6299])
 - *(helm)* Add external secret integration ([8629782])
+- *(release)* Generate CHANGELOG.md and version tags with git-cliff ([68888b0])
 
 ### 🐛 Bug Fixes
 
